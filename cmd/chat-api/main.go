@@ -5,6 +5,7 @@ import (
 	"flag"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -24,6 +25,7 @@ func main() {
 
 	port := envOr("CHAT_API_PORT", "2358")
 	apiKey := envOr("CHAT_API_KEY", "")
+	allowlist := envOr("CHAT_API_ALLOWLIST", envOr("PAYRAM_AGENT_ADMIN_ALLOWLIST", ""))
 	openaiKey := envOr("OPENAI_API_KEY", "")
 	openaiModel := envOr("OPENAI_MODEL", "gpt-4o-mini")
 	openaiBase := envOr("OPENAI_BASE_URL", "https://api.openai.com/v1")
@@ -31,17 +33,18 @@ func main() {
 
 	flag.StringVar(&port, "port", port, "port to listen on")
 	flag.StringVar(&apiKey, "api-key", apiKey, "chat API bearer key")
+	flag.StringVar(&allowlist, "allowlist", allowlist, "comma-separated CIDR allowlist for chat api")
 	flag.StringVar(&openaiKey, "openai-key", openaiKey, "OpenAI API key")
 	flag.StringVar(&openaiModel, "openai-model", openaiModel, "OpenAI model")
 	flag.StringVar(&openaiBase, "openai-base", openaiBase, "OpenAI base URL")
 	flag.StringVar(&mcpURL, "mcp", mcpURL, "MCP server URL (HTTP)")
 	flag.Parse()
 
-	if openaiKey == "" {
-		logger.Fatal("OPENAI_API_KEY is required")
+	if strings.TrimSpace(openaiKey) == "" {
+		logger.Warn("OPENAI_API_KEY not set; chat API will fail OpenAI calls until configured")
 	}
 
-	h := chatapi.NewHandler(logger, apiKey, openaiKey, openaiModel, openaiBase, mcpURL)
+	h := chatapi.NewHandler(logger, apiKey, allowlist, openaiKey, openaiModel, openaiBase, mcpURL)
 	mux := http.NewServeMux()
 	h.Register(mux)
 	mux.HandleFunc("/version", func(w http.ResponseWriter, _ *http.Request) {

@@ -22,6 +22,7 @@ func main() {
 	mcpAddr := flag.String("mcp-http", envOr("MCP_HTTP_ADDR", ":3333"), "MCP HTTP listen address (e.g., :3333)")
 	chatPort := flag.String("chat-port", envOr("CHAT_API_PORT", "2358"), "Chat API port")
 	chatAPIKey := flag.String("chat-api-key", envOr("CHAT_API_KEY", ""), "Chat API bearer key")
+	chatAllowlist := flag.String("chat-allowlist", envOr("CHAT_API_ALLOWLIST", envOr("PAYRAM_AGENT_ADMIN_ALLOWLIST", "")), "comma-separated CIDR allowlist for chat api")
 	openaiKey := flag.String("openai-key", envOr("OPENAI_API_KEY", ""), "OpenAI API key")
 	openaiModel := flag.String("openai-model", envOr("OPENAI_MODEL", "gpt-4o-mini"), "OpenAI model")
 	openaiBase := flag.String("openai-base", envOr("OPENAI_BASE_URL", "https://api.openai.com/v1"), "OpenAI base URL")
@@ -29,7 +30,7 @@ func main() {
 	flag.Parse()
 
 	if !*disableChat && strings.TrimSpace(*openaiKey) == "" {
-		log.Fatalf("OPENAI_API_KEY is required unless --no-chat is set")
+		log.Printf("WARN: OPENAI_API_KEY not set; chat API will fail OpenAI calls until configured")
 	}
 
 	// Launch MCP HTTP server
@@ -47,7 +48,7 @@ func main() {
 		go func() {
 			logger := logrus.New().WithField("component", "chat-api")
 			mcpURL := envOr("MCP_SERVER_URL", fmt.Sprintf("http://localhost%s/", strings.TrimPrefix(*mcpAddr, "")))
-			h := chatapi.NewHandler(logger, *chatAPIKey, *openaiKey, *openaiModel, *openaiBase, mcpURL)
+			h := chatapi.NewHandler(logger, *chatAPIKey, *chatAllowlist, *openaiKey, *openaiModel, *openaiBase, mcpURL)
 			mux := http.NewServeMux()
 			h.Register(mux)
 

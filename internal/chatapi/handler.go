@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -22,12 +23,13 @@ type Handler struct {
 	openaiBase  string
 	mcp         *chatserver.MCPClient
 	apiKey      string
+	allowed     []*net.IPNet
 	httpClient  *http.Client
 	logger      *logrus.Entry
 }
 
 // NewHandler constructs a chat API handler.
-func NewHandler(logger *logrus.Entry, apiKey, openaiKey, openaiModel, openaiBase, mcpURL string) *Handler {
+func NewHandler(logger *logrus.Entry, apiKey, allowlist, openaiKey, openaiModel, openaiBase, mcpURL string) *Handler {
 	oc := &http.Client{Timeout: 30 * time.Second}
 	return &Handler{
 		openaiKey:   openaiKey,
@@ -35,6 +37,7 @@ func NewHandler(logger *logrus.Entry, apiKey, openaiKey, openaiModel, openaiBase
 		openaiBase:  strings.TrimRight(openaiBase, "/"),
 		mcp:         chatserver.NewMCPClient(mcpURL),
 		apiKey:      apiKey,
+		allowed:     parseAllowlist(allowlist),
 		httpClient:  oc,
 		logger:      logger,
 	}
@@ -191,12 +194,61 @@ func (h *Handler) callOpenAI(ctx context.Context, req ChatCompletionRequest) (Ch
 }
 
 func (h *Handler) authorize(r *http.Request) bool {
+	ip := parseRemoteIP(r.RemoteAddr)
+	if isAllowed(ip, h.allowed) {
+		return true
+	}
 	if h.apiKey == "" {
 		return true
 	}
 	if v := r.Header.Get("X-MCP-Key"); v != "" {
 		return strings.TrimSpace(v) == h.apiKey
 	}
+	return false
+}
+
+func parseRemoteIP(remoteAddr string) net.IP {
+	host, _, err := net.SplitHostPort(remoteAddr)
+	if err == nil {
+		return net.ParseIP(host)
+	}
+	return net.ParseIP(remoteAddr)
+}
+
+func parseAllowlist(raw string) []*net.IPNet {
+	var networks []*net.IPNet
+
+	for _, entry := range strings.Split(raw, ",") {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+
+		_, network, err := net.ParseCIDR(entry)
+		if err != nil {
+			continue
+		}
+		networks = append(networks, network)
+	}
+
+	return networks
+}
+
+func isAllowed(ip net.IP, allowed []*net.IPNet) bool {
+	if ip == nil {
+		return false
+	}
+
+	if ip.IsLoopback() {
+		return true
+	}
+
+	for _, network := range allowed {
+		if network.Contains(ip) {
+			return true
+		}
+	}
+
 	return false
 }
 

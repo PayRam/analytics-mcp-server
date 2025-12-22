@@ -11,11 +11,13 @@ import (
 	"github.com/payram/payram-analytics-mcp-server/internal/agent/supervisor"
 )
 
-type noopSupervisor struct{}
+type spySupervisor struct {
+	restarts int
+}
 
-func (n *noopSupervisor) RestartAll() error         { return nil }
-func (n *noopSupervisor) Status() supervisor.Status { return supervisor.Status{} }
-func (n *noopSupervisor) Logs(string, int) []string { return nil }
+func (s *spySupervisor) RestartAll() error         { s.restarts++; return nil }
+func (s *spySupervisor) Status() supervisor.Status { return supervisor.Status{} }
+func (s *spySupervisor) Logs(string, int) []string { return nil }
 
 func TestSecretsHandlers(t *testing.T) {
 	home := t.TempDir()
@@ -23,7 +25,8 @@ func TestSecretsHandlers(t *testing.T) {
 	t.Setenv("PAYRAM_AGENT_ADMIN_TOKEN", "tok")
 	t.Setenv("PAYRAM_AGENT_ADMIN_ALLOWLIST", "127.0.0.1/32")
 
-	mux := NewMux(&noopSupervisor{})
+	sup := &spySupervisor{}
+	mux := NewMux(sup)
 
 	// PUT key
 	body := map[string]string{"openai_api_key": "sk-test"}
@@ -35,6 +38,9 @@ func TestSecretsHandlers(t *testing.T) {
 	mux.ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("put status: %d body=%s", rr.Code, rr.Body.String())
+	}
+	if sup.restarts != 1 {
+		t.Fatalf("expected restart after setting key, got %d", sup.restarts)
 	}
 
 	// Status should show set

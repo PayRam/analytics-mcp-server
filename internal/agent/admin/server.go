@@ -69,7 +69,7 @@ func NewMux(sup Supervisor) http.Handler {
 	mux.Handle("/admin/child/restart", adminGuard(http.HandlerFunc(restartHandler(sup))))
 	mux.Handle("/admin/child/status", adminGuard(http.HandlerFunc(statusHandler(sup))))
 	mux.Handle("/admin/logs", adminGuard(http.HandlerFunc(logsHandler(sup))))
-	mux.Handle("/admin/secrets/openai", adminGuard(http.HandlerFunc(secretsHandler)))
+	mux.Handle("/admin/secrets/openai", adminGuard(http.HandlerFunc(secretsHandler(sup))))
 	mux.Handle("/admin/secrets/status", adminGuard(http.HandlerFunc(secretsStatusHandler)))
 
 	return mux
@@ -688,33 +688,43 @@ func logsHandler(sup Supervisor) func(http.ResponseWriter, *http.Request) {
 	}
 }
 
-func secretsHandler(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case http.MethodPut:
-		var req struct {
-			OpenAIAPIKey string `json:"openai_api_key"`
+func secretsHandler(sup Supervisor) func(http.ResponseWriter, *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodPut:
+			var req struct {
+				OpenAIAPIKey string `json:"openai_api_key"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				RespondError(w, http.StatusBadRequest, "INVALID_JSON", err.Error())
+				return
+			}
+			if strings.TrimSpace(req.OpenAIAPIKey) == "" {
+				RespondError(w, http.StatusBadRequest, "INVALID_ARGUMENT", "openai_api_key is required")
+				return
+			}
+			if err := secrets.PutOpenAIKey(update.HomeDir(), req.OpenAIAPIKey); err != nil {
+				RespondError(w, http.StatusInternalServerError, "SECRET_SAVE_FAILED", err.Error())
+				return
+			}
+
+			if sup != nil {
+				if err := sup.RestartAll(); err != nil {
+					RespondError(w, http.StatusInternalServerError, "RESTART_FAILED", err.Error())
+					return
+				}
+			}
+
+			RespondOK(w, http.StatusOK, map[string]any{"ok": true})
+		case http.MethodDelete:
+			if err := secrets.DeleteOpenAIKey(update.HomeDir()); err != nil {
+				RespondError(w, http.StatusInternalServerError, "SECRET_DELETE_FAILED", err.Error())
+				return
+			}
+			RespondOK(w, http.StatusOK, map[string]any{"ok": true})
+		default:
+			RespondError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "only PUT and DELETE allowed")
 		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			RespondError(w, http.StatusBadRequest, "INVALID_JSON", err.Error())
-			return
-		}
-		if strings.TrimSpace(req.OpenAIAPIKey) == "" {
-			RespondError(w, http.StatusBadRequest, "INVALID_ARGUMENT", "openai_api_key is required")
-			return
-		}
-		if err := secrets.PutOpenAIKey(update.HomeDir(), req.OpenAIAPIKey); err != nil {
-			RespondError(w, http.StatusInternalServerError, "SECRET_SAVE_FAILED", err.Error())
-			return
-		}
-		RespondOK(w, http.StatusOK, map[string]any{"ok": true})
-	case http.MethodDelete:
-		if err := secrets.DeleteOpenAIKey(update.HomeDir()); err != nil {
-			RespondError(w, http.StatusInternalServerError, "SECRET_DELETE_FAILED", err.Error())
-			return
-		}
-		RespondOK(w, http.StatusOK, map[string]any{"ok": true})
-	default:
-		RespondError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "only PUT and DELETE allowed")
 	}
 }
 

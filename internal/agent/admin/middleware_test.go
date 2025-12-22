@@ -40,19 +40,19 @@ func TestMiddlewareWrongToken(t *testing.T) {
 	}))
 
 	req := httptest.NewRequest(http.MethodGet, "/admin/version", nil)
-	req.RemoteAddr = "127.0.0.1:1234"
+	req.RemoteAddr = "8.8.8.8:3333" // not allowlisted
 	req.Header.Set(adminKeyHeader, "nope")
 	rr := httptest.NewRecorder()
 
 	handler.ServeHTTP(rr, req)
 
-	if rr.Code != http.StatusOK {
-		t.Fatalf("expected status %d, got %d", http.StatusOK, rr.Code)
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("expected status %d, got %d", http.StatusUnauthorized, rr.Code)
 	}
 
 	body := decodeBody(t, rr)
-	if ok, _ := body["ok"].(bool); !ok {
-		t.Fatalf("expected ok response, got %v", body)
+	if code := errorCode(t, body); code != "UNAUTHORIZED" {
+		t.Fatalf("expected error code UNAUTHORIZED, got %s", code)
 	}
 }
 
@@ -106,7 +106,7 @@ func TestMiddlewareAllowsCIDR(t *testing.T) {
 	}
 }
 
-func TestMiddlewareBlocksIP(t *testing.T) {
+func TestMiddlewareNonAllowlistWithValidToken(t *testing.T) {
 	t.Setenv("PAYRAM_AGENT_ADMIN_TOKEN", "secret")
 	t.Setenv("PAYRAM_AGENT_ADMIN_ALLOWLIST", "")
 
@@ -115,19 +115,43 @@ func TestMiddlewareBlocksIP(t *testing.T) {
 	}))
 
 	req := httptest.NewRequest(http.MethodGet, "/admin/version", nil)
-	req.RemoteAddr = "8.8.8.8:3333"
+	req.RemoteAddr = "8.8.8.8:3333" // not allowlisted
 	req.Header.Set(adminKeyHeader, "secret")
 	rr := httptest.NewRecorder()
 
 	handler.ServeHTTP(rr, req)
 
-	if rr.Code != http.StatusForbidden {
-		t.Fatalf("expected status %d, got %d", http.StatusForbidden, rr.Code)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d", http.StatusOK, rr.Code)
 	}
 
 	body := decodeBody(t, rr)
-	if code := errorCode(t, body); code != "FORBIDDEN_IP" {
-		t.Fatalf("expected error code FORBIDDEN_IP, got %s", code)
+	if ok, _ := body["ok"].(bool); !ok {
+		t.Fatalf("expected ok response, got %v", body)
+	}
+}
+
+func TestMiddlewareBlocksIP(t *testing.T) {
+	t.Setenv("PAYRAM_AGENT_ADMIN_TOKEN", "")
+	t.Setenv("PAYRAM_AGENT_ADMIN_ALLOWLIST", "")
+
+	handler := NewAdminMiddlewareFromEnv()(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		RespondOK(w, http.StatusOK, map[string]string{"value": "ok"})
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/version", nil)
+	req.RemoteAddr = "8.8.8.8:3333"
+	rr := httptest.NewRecorder()
+
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusInternalServerError {
+		t.Fatalf("expected status %d, got %d", http.StatusInternalServerError, rr.Code)
+	}
+
+	body := decodeBody(t, rr)
+	if code := errorCode(t, body); code != "ADMIN_TOKEN_MISSING" {
+		t.Fatalf("expected error code ADMIN_TOKEN_MISSING, got %s", code)
 	}
 }
 
