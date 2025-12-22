@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"os/exec"
 	"strings"
@@ -60,6 +61,8 @@ type Supervisor struct {
 
 	wg sync.WaitGroup
 }
+
+var forwardChildLogs = isForwardChildLogsEnabled()
 
 // NewFromEnv builds a Supervisor using environment overrides for binaries.
 func NewFromEnv() (*Supervisor, error) {
@@ -341,8 +344,17 @@ func exitSummary(info *ExitInfo) string {
 func (c *child) pipeOutput(r io.ReadCloser, stream string) {
 	scanner := bufio.NewScanner(r)
 	for scanner.Scan() {
-		c.logBuf.Add(fmt.Sprintf("[%s][%s] %s", c.name, stream, scanner.Text()))
+		line := fmt.Sprintf("[%s][%s] %s", c.name, stream, scanner.Text())
+		c.logBuf.Add(line)
+		if forwardChildLogs {
+			log.Print(line)
+		}
 	}
+}
+
+func isForwardChildLogsEnabled() bool {
+	v := strings.TrimSpace(strings.ToLower(os.Getenv("PAYRAM_AGENT_FORWARD_CHILD_LOGS")))
+	return v == "1" || v == "true" || v == "yes" || v == "on"
 }
 
 func (c *child) childEnv() []string {

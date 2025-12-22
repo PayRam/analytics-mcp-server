@@ -3,6 +3,9 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"log"
+	"os"
+	"strings"
 
 	"github.com/payram/payram-analytics-mcp-server/internal/protocol"
 )
@@ -17,6 +20,8 @@ type Tool interface {
 type Toolbox struct {
 	tools map[string]Tool
 }
+
+var toolDebugEnabled = isToolDebugEnabled()
 
 // NewToolbox constructs a toolbox with the provided tools.
 func NewToolbox(tools ...Tool) *Toolbox {
@@ -43,5 +48,26 @@ func (tb *Toolbox) Call(ctx context.Context, name string, args json.RawMessage) 
 	if !ok {
 		return protocol.CallResult{}, &protocol.ResponseError{Code: -32601, Message: "tool not found"}
 	}
+
+	if toolDebugEnabled {
+		log.Printf("[mcp-debug] tool=%s args=%s", name, truncateArgs(args))
+	}
 	return tool.Invoke(ctx, args)
+}
+
+func truncateArgs(args json.RawMessage) string {
+	const max = 2048
+	if len(args) == 0 {
+		return "{}"
+	}
+	s := string(args)
+	if len(s) > max {
+		return s[:max] + "..."
+	}
+	return s
+}
+
+func isToolDebugEnabled() bool {
+	v := strings.TrimSpace(strings.ToLower(os.Getenv("PAYRAM_MCP_DEBUG")))
+	return v == "1" || v == "true" || v == "yes" || v == "on"
 }
