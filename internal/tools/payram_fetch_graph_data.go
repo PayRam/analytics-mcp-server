@@ -184,10 +184,21 @@ func (t *payramFetchGraphDataTool) graphData(ctx context.Context, base, token st
 		return "", &protocol.ResponseError{Code: resp.StatusCode, Message: fmt.Sprintf("unexpected status: %d", resp.StatusCode)}
 	}
 
-	var raw json.RawMessage
-	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
+	var graphResp struct {
+		ID         int             `json:"id"`
+		Type       string          `json:"type"`
+		Data       json.RawMessage `json:"data"`
+		Attributes json.RawMessage `json:"attributes"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&graphResp); err != nil {
 		return "", &protocol.ResponseError{Code: -32603, Message: fmt.Sprintf("decode response: %v", err)}
 	}
-	pretty, _ := json.MarshalIndent(raw, "", "  ")
+
+	// Check if data is null or empty
+	if len(graphResp.Data) == 0 || string(graphResp.Data) == "null" {
+		return fmt.Sprintf("No data available for the requested time period.\nGraph type: %s\nThis means there were no transactions/payments in the selected date range. Try a longer time period (e.g., last_30_days, last_6_months, or forever).", graphResp.Type), nil
+	}
+
+	pretty, _ := json.MarshalIndent(graphResp, "", "  ")
 	return string(pretty), nil
 }

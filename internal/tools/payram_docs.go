@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -19,6 +20,7 @@ import (
 //   - search: query markdown corpus, optional category filter, limit results
 //   - get_section: return a specific section (by path and optional heading) or whole file
 type payramDocsTool struct {
+	root           string
 	sections       []docSection
 	sectionsByPath map[string][]docSection // path -> sections
 	files          map[string]string       // path -> full content
@@ -44,6 +46,7 @@ func PayramDocs() *payramDocsTool {
 	applyTopics(sections)
 
 	return &payramDocsTool{
+		root:           filepath.Clean(root),
 		sections:       sections,
 		sectionsByPath: byPath,
 		files:          files,
@@ -54,13 +57,13 @@ func PayramDocs() *payramDocsTool {
 func (t *payramDocsTool) Descriptor() protocol.ToolDescriptor {
 	return protocol.ToolDescriptor{
 		Name:        "payram_docs",
-		Description: "Search PayRam docs and return sections. Categories: faqs, features, onboarding-guide. Actions: search, get_section, list_index. Keywords are boosted when they match headings or curated topic tags (analytics, payouts, hot wallet, payment links, multi-brand, multi-currency, customer deposit wallets, API/webhooks, config/deployment, debug).",
+		Description: "Search PayRam docs, fetch sections, load full docs by id, or list available docs. Categories: faqs, features, onboarding-guide. Actions: search, get_section, list_index, get_doc_by_id, list_docs. Keywords are boosted when they match headings or curated topic tags (analytics, payouts, hot wallet, payment links, multi-brand, multi-currency, customer deposit wallets, API/webhooks, config/deployment, debug).",
 		InputSchema: &protocol.JSONSchema{
 			Type: "object",
 			Properties: map[string]protocol.JSONSchema{
 				"action": {
 					Type:        "string",
-					Enum:        []string{"search", "get_section", "list_index"},
+					Enum:        []string{"search", "get_section", "list_index", "get_doc_by_id", "list_docs"},
 					Description: "Action to perform",
 				},
 				"query": {
@@ -83,6 +86,14 @@ func (t *payramDocsTool) Descriptor() protocol.ToolDescriptor {
 					Type:        "string",
 					Description: "Heading within the file (optional; if omitted returns whole file)",
 				},
+				"id": {
+					Type:        "string",
+					Description: "Doc id like features/payouts (required for get_doc_by_id)",
+				},
+				"prefix": {
+					Type:        "string",
+					Description: "Optional prefix to scope list_docs (e.g. features or faqs/payment)",
+				},
 			},
 			Required: []string{"action"},
 		},
@@ -96,6 +107,8 @@ type docsArgs struct {
 	Limit    int    `json:"limit"`
 	Path     string `json:"path"`
 	Heading  string `json:"heading"`
+	ID       string `json:"id"`
+	Prefix   string `json:"prefix"`
 }
 
 // Invoke routes search and section fetch.
@@ -126,10 +139,17 @@ func (t *payramDocsTool) Invoke(ctx context.Context, raw json.RawMessage) (proto
 			return protocol.CallResult{}, &protocol.ResponseError{Code: -32602, Message: "path is required for get_section"}
 		}
 		return t.getSection(args.Path, args.Heading)
+	case "get_doc_by_id":
+		if strings.TrimSpace(args.ID) == "" {
+			return protocol.CallResult{}, &protocol.ResponseError{Code: -32602, Message: "id is required for get_doc_by_id"}
+		}
+		return t.getDocByID(args.ID)
+	case "list_docs":
+		return t.listDocs(args.Prefix)
 	case "list_index":
 		return t.listIndex(), nil
 	default:
-		return protocol.CallResult{}, &protocol.ResponseError{Code: -32602, Message: "action must be search or get_section"}
+		return protocol.CallResult{}, &protocol.ResponseError{Code: -32602, Message: "action must be search, get_section, list_index, get_doc_by_id, or list_docs"}
 	}
 }
 
@@ -218,6 +238,62 @@ func (t *payramDocsTool) getSection(path, heading string) (protocol.CallResult, 
 	return protocol.CallResult{}, &protocol.ResponseError{Code: -32004, Message: "heading not found in file"}
 }
 
+// getDocByID returns the full markdown for a doc id like "features/payouts".
+func (t *payramDocsTool) getDocByID(id string) (protocol.CallResult, *protocol.ResponseError) {
+	meta, err := buildDocMetadata(id)
+	if err != nil {
+		return protocol.CallResult{}, &protocol.ResponseError{Code: -32602, Message: err.Error()}
+	}
+
+	fullPath := filepath.Join(t.root, meta.path)
+	data, readErr := os.ReadFile(fullPath)
+	if readErr != nil {
+		if errors.Is(readErr, fs.ErrNotExist) {
+			return protocol.CallResult{}, &protocol.ResponseError{Code: -32004, Message: describeMissingDoc(t.root, meta.path)}
+		}
+		return protocol.CallResult{}, &protocol.ResponseError{Code: -32004, Message: readErr.Error()}
+	}
+
+	text := strings.TrimSpace(string(data))
+	if text == "" {
+		return protocol.CallResult{}, &protocol.ResponseError{Code: -32004, Message: "content not found"}
+	}
+
+	body := fmt.Sprintf("Loaded doc %s (%s)\n\n%s", meta.id, meta.path, text)
+	return protocol.CallResult{Content: []protocol.ContentPart{{Type: "text", Text: body}}}, nil
+}
+
+// listDocs enumerates doc ids under docs/payram-docs, optionally scoped by prefix.
+func (t *payramDocsTool) listDocs(prefix string) (protocol.CallResult, *protocol.ResponseError) {
+	sanitized, err := sanitizePrefix(prefix)
+	if err != nil {
+		return protocol.CallResult{}, &protocol.ResponseError{Code: -32602, Message: err.Error()}
+	}
+
+	docs, listErr := collectDocIDs(t.root, sanitized)
+	if listErr != nil {
+		return protocol.CallResult{}, &protocol.ResponseError{Code: -32004, Message: listErr.Error()}
+	}
+
+	var b strings.Builder
+	section := sanitized
+	if section == "" {
+		section = "root"
+	}
+	plural := "s"
+	if len(docs) == 1 {
+		plural = ""
+	}
+	b.WriteString(fmt.Sprintf("Found %d doc%s under %s.\n", len(docs), plural, section))
+	for _, d := range docs {
+		b.WriteString("- ")
+		b.WriteString(d)
+		b.WriteString("\n")
+	}
+
+	return protocol.CallResult{Content: []protocol.ContentPart{{Type: "text", Text: strings.TrimSpace(b.String())}}}, nil
+}
+
 // listIndex returns available categories, topics, and per-file headings (truncated).
 func (t *payramDocsTool) listIndex() protocol.CallResult {
 	cats := make(map[string]struct{})
@@ -266,6 +342,132 @@ func (t *payramDocsTool) listIndex() protocol.CallResult {
 	}
 
 	return protocol.CallResult{Content: []protocol.ContentPart{{Type: "text", Text: strings.TrimSpace(b.String())}}}
+}
+
+// buildDocMetadata normalizes a doc id into a path and url.
+func buildDocMetadata(id string) (docMetadata, error) {
+	if strings.Contains(id, "..") {
+		return docMetadata{}, fmt.Errorf("doc id must not include path traversal characters")
+	}
+
+	normalized := strings.Trim(id, "/")
+	if normalized == "" {
+		return docMetadata{}, fmt.Errorf("doc id must not be empty")
+	}
+
+	pathWithExt := normalized
+	if !strings.HasSuffix(strings.ToLower(pathWithExt), ".md") {
+		pathWithExt += ".md"
+	}
+
+	cleanedPath := filepath.ToSlash(pathWithExt)
+	return docMetadata{
+		id:   normalized,
+		path: cleanedPath,
+		url:  fmt.Sprintf("https://docs.payram.com/%s", normalized),
+	}, nil
+}
+
+// sanitizePrefix removes unsafe characters and normalizes separators.
+func sanitizePrefix(prefix string) (string, error) {
+	p := strings.TrimSpace(prefix)
+	if p == "" {
+		return "", nil
+	}
+	if strings.Contains(p, "..") {
+		return "", fmt.Errorf("prefix must not include path traversal characters")
+	}
+	p = strings.Trim(p, "/")
+	return filepath.ToSlash(p), nil
+}
+
+// joinRelativePath joins two segments preserving forward slashes.
+func joinRelativePath(base, segment string) string {
+	if base == "" {
+		return filepath.ToSlash(segment)
+	}
+	return filepath.ToSlash(filepath.Join(base, segment))
+}
+
+// collectDocIDs walks the docs tree under a prefix and returns doc ids without .md.
+func collectDocIDs(root, relativeDir string) ([]string, error) {
+	rootClean := filepath.Clean(root)
+	absoluteDir := filepath.Clean(filepath.Join(rootClean, relativeDir))
+	if !strings.HasPrefix(absoluteDir, rootClean) {
+		return nil, fmt.Errorf("unknown docs prefix \"%s\"", relativeDir)
+	}
+
+	entries, err := os.ReadDir(absoluteDir)
+	if err != nil {
+		return nil, err
+	}
+
+	docs := make([]string, 0)
+	subdirectories := make([]string, 0)
+
+	for _, entry := range entries {
+		if entry.IsDir() {
+			subdirectories = append(subdirectories, entry.Name())
+			continue
+		}
+		if entry.Type().IsRegular() && strings.HasSuffix(strings.ToLower(entry.Name()), ".md") {
+			base := strings.TrimSuffix(entry.Name(), ".md")
+			rel := joinRelativePath(relativeDir, base)
+			docs = append(docs, rel)
+		}
+	}
+
+	for _, dir := range subdirectories {
+		relDir := filepath.Join(relativeDir, dir)
+		nestedDocs, nestedErr := collectDocIDs(rootClean, relDir)
+		if nestedErr != nil {
+			return nil, nestedErr
+		}
+		docs = append(docs, nestedDocs...)
+	}
+
+	sort.Strings(docs)
+	return docs, nil
+}
+
+// describeMissingDoc formats a helpful error message when a doc is missing.
+func describeMissingDoc(root, relativePath string) string {
+	fullPath := filepath.Join(root, relativePath)
+	parentDir := filepath.Dir(fullPath)
+	rootClean := filepath.Clean(root)
+	relativeSection := strings.TrimPrefix(filepath.ToSlash(strings.TrimPrefix(parentDir, rootClean)), "/")
+	sectionLabel := "the root docs folder"
+	if relativeSection != "" && relativeSection != "." {
+		sectionLabel = "docs/" + relativeSection
+	}
+
+	if entries, err := os.ReadDir(parentDir); err == nil {
+		siblings := make([]string, 0)
+		for _, entry := range entries {
+			if entry.IsDir() {
+				continue
+			}
+			if entry.Type().IsRegular() && strings.HasSuffix(strings.ToLower(entry.Name()), ".md") {
+				base := strings.TrimSuffix(entry.Name(), ".md")
+				rel := base
+				if relativeSection != "" && relativeSection != "." {
+					rel = joinRelativePath(relativeSection, base)
+				}
+				siblings = append(siblings, rel)
+			}
+		}
+		if len(siblings) > 0 {
+			return fmt.Sprintf("No doc found for \"%s\". Available entries in %s: %s.", relativePath, sectionLabel, strings.Join(siblings, ", "))
+		}
+	}
+
+	return fmt.Sprintf("No doc found for \"%s\". Expected file at %s. Ensure your local docs mirror the PayRam docs tree or request a different id.", relativePath, fullPath)
+}
+
+type docMetadata struct {
+	id   string
+	path string
+	url  string
 }
 
 // scoreSection gives weight to heading matches and body matches.

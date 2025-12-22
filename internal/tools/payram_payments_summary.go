@@ -376,15 +376,3 @@ func buildPayload(dateFilter, customStart, customEnd string, currencyCodes []str
 	}
 	return payload
 }
-
-// maskToken logs only a prefix/suffix of the token to avoid leaking secrets.
-func maskToken(token string) string {
-	t := strings.TrimSpace(token)
-	if t == "" {
-		return ""
-	}
-	if len(t) <= 6 {
-		return "***"
-	}
-	return fmt.Sprintf("%s***%s", t[:3], t[len(t)-2:])
-}

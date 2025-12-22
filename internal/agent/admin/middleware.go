@@ -27,28 +27,13 @@ const adminKeyHeader = "X-MCP-Key"
 
 func (m *adminMiddleware) wrap(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if m.token == "" {
-			RespondError(w, http.StatusInternalServerError, "ADMIN_TOKEN_MISSING", "admin token not configured")
-			return
-		}
-
 		ip := parseRemoteIP(r.RemoteAddr)
 		if !m.isAllowed(ip) {
 			RespondError(w, http.StatusForbidden, "FORBIDDEN_IP", "request IP not allowed")
 			return
 		}
 
-		key := strings.TrimSpace(r.Header.Get(adminKeyHeader))
-		if key == "" {
-			RespondError(w, http.StatusUnauthorized, "UNAUTHORIZED", "missing or invalid admin key")
-			return
-		}
-
-		if key != m.token {
-			RespondError(w, http.StatusUnauthorized, "UNAUTHORIZED", "invalid admin key")
-			return
-		}
-
+		// Allowlisted IPs bypass the token entirely.
 		next.ServeHTTP(w, r)
 	})
 }

@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/http/httputil"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -37,6 +39,27 @@ func NewMux(sup Supervisor) http.Handler {
 	mux.HandleFunc("/health", healthHandler)
 	mux.HandleFunc("/version", versionHandler)
 
+	chatPort := envPort("PAYRAM_CHAT_PORT", 2358)
+	mcpPort := envPort("PAYRAM_MCP_PORT", 3333)
+
+	if chatProxyEnabled() {
+		if proxy := buildServiceProxy("/v1/chat/completions", chatPort, "CHAT_PROXY_ERROR"); proxy != nil {
+			mux.Handle("/v1/chat/completions", proxy)
+		}
+	}
+
+	// Expose full chat API under /chat/*
+	if proxy := buildPathProxy("/chat", chatPort, "CHAT_PROXY_ERROR"); proxy != nil {
+		mux.Handle("/chat", proxy)
+		mux.Handle("/chat/", proxy)
+	}
+
+	// Expose full MCP HTTP API under /mcp/*
+	if proxy := buildPathProxy("/mcp", mcpPort, "MCP_PROXY_ERROR"); proxy != nil {
+		mux.Handle("/mcp", proxy)
+		mux.Handle("/mcp/", proxy)
+	}
+
 	adminGuard := NewAdminMiddlewareFromEnv()
 	mux.Handle("/admin/version", adminGuard(http.HandlerFunc(adminVersionHandler)))
 	mux.Handle("/admin/update/available", adminGuard(http.HandlerFunc(updateAvailableHandler)))
@@ -58,6 +81,60 @@ func healthHandler(w http.ResponseWriter, _ *http.Request) {
 
 func versionHandler(w http.ResponseWriter, _ *http.Request) {
 	RespondOK(w, http.StatusOK, version.Get())
+}
+
+// chatProxyEnabled returns true when PAYRAM_AGENT_PROXY_CHAT is truthy (1/true/yes).
+func chatProxyEnabled() bool {
+	v := strings.ToLower(strings.TrimSpace(os.Getenv("PAYRAM_AGENT_PROXY_CHAT")))
+	return v == "1" || v == "true" || v == "yes"
+}
+
+// buildServiceProxy proxies a single fixed path to a target port (no path rewrite).
+func buildServiceProxy(path string, port int, errCode string) http.Handler {
+	target, err := url.Parse(fmt.Sprintf("http://127.0.0.1:%d", port))
+	if err != nil {
+		return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			RespondError(w, http.StatusInternalServerError, errCode+"_TARGET_INVALID", err.Error())
+		})
+	}
+	proxy := httputil.NewSingleHostReverseProxy(target)
+	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
+		RespondError(w, http.StatusBadGateway, errCode, err.Error())
+	}
+	proxy.Director = func(req *http.Request) {
+		req.URL.Scheme = target.Scheme
+		req.URL.Host = target.Host
+		req.Host = target.Host
+		req.URL.Path = path
+	}
+	return proxy
+}
+
+// buildPathProxy proxies any request under a prefix to a target port, stripping the prefix.
+func buildPathProxy(prefix string, port int, errCode string) http.Handler {
+	target, err := url.Parse(fmt.Sprintf("http://127.0.0.1:%d", port))
+	if err != nil {
+		return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			RespondError(w, http.StatusInternalServerError, errCode+"_TARGET_INVALID", err.Error())
+		})
+	}
+
+	proxy := httputil.NewSingleHostReverseProxy(target)
+	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
+		RespondError(w, http.StatusBadGateway, errCode, err.Error())
+	}
+	orig := proxy.Director
+	proxy.Director = func(req *http.Request) {
+		orig(req)
+		req.URL.Scheme = target.Scheme
+		req.URL.Host = target.Host
+		req.Host = target.Host
+		req.URL.Path = strings.TrimPrefix(req.URL.Path, prefix)
+		if req.URL.Path == "" {
+			req.URL.Path = "/"
+		}
+	}
+	return proxy
 }
 
 func adminVersionHandler(w http.ResponseWriter, r *http.Request) {

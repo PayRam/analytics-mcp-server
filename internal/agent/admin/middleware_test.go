@@ -21,13 +21,13 @@ func TestMiddlewareMissingToken(t *testing.T) {
 
 	handler.ServeHTTP(rr, req)
 
-	if rr.Code != http.StatusInternalServerError {
-		t.Fatalf("expected status %d, got %d", http.StatusInternalServerError, rr.Code)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d", http.StatusOK, rr.Code)
 	}
 
 	body := decodeBody(t, rr)
-	if code := errorCode(t, body); code != "ADMIN_TOKEN_MISSING" {
-		t.Fatalf("expected error code ADMIN_TOKEN_MISSING, got %s", code)
+	if ok, _ := body["ok"].(bool); !ok {
+		t.Fatalf("expected ok response, got %v", body)
 	}
 }
 
@@ -46,13 +46,13 @@ func TestMiddlewareWrongToken(t *testing.T) {
 
 	handler.ServeHTTP(rr, req)
 
-	if rr.Code != http.StatusUnauthorized {
-		t.Fatalf("expected status %d, got %d", http.StatusUnauthorized, rr.Code)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d", http.StatusOK, rr.Code)
 	}
 
 	body := decodeBody(t, rr)
-	if code := errorCode(t, body); code != "UNAUTHORIZED" {
-		t.Fatalf("expected error code UNAUTHORIZED, got %s", code)
+	if ok, _ := body["ok"].(bool); !ok {
+		t.Fatalf("expected ok response, got %v", body)
 	}
 }
 

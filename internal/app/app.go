@@ -11,6 +11,7 @@ func NewToolbox() *mcp.Toolbox {
 		// Core info tools
 		tools.PayramIntro(),
 		tools.PayramDocs(),
+		tools.PayramDashboard(),
 
 		// Generic discovery and fetch tools
 		tools.PayramDiscoverAnalytics(),
