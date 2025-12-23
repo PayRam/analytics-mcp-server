@@ -278,7 +278,9 @@ OPERATING RULES:
 - If a tool returns empty data, reply with a concise "No records for that period" instead of asking questions.
 - If a tool errors, report the error briefly and, if possible, try an alternate nearby tool (e.g., payram_payments_summary if numbers summary lacks data).
 
-Reply concisely with the actual data or a clear "No records" if the tool returns none.`
+Reply concisely with the actual data or a clear "No records" if the tool returns none.
+
+Always format your final answer as Markdown (use bullets, tables, or code blocks when useful).`
 }
 
 // convert MCP tool descriptors to OpenAI tools schema.
