@@ -318,7 +318,7 @@ func (b *bot) handleUpdate(ctx context.Context, up Update) {
 
 	if !b.isAllowed(chatIDStr) {
 		entry.Warn("chat not allowed")
-		msg := fmt.Sprintf("*Access denied*\nAdd this chat\\_id to the allowlist: `%s`\nThen retry your message\\.", escapeMarkdownV2(chatIDStr))
+		msg := fmt.Sprintf("*Access denied*\nAdd this chat\\_id to the allowlist: `%s`\nOn the host, run:\n`./setup_payram_agent.sh --add-telegram-chat-ids \"%s\"`\nThen retry your message\\.", escapeMarkdownV2(chatIDStr), escapeMarkdownV2(chatIDStr))
 		if err := b.sendMessageMarkdown(ctx, chatID, msg); err != nil {
 			entry.WithError(err).Warn("failed to send not-allowed notice")
 		}

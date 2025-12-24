@@ -2,17 +2,18 @@
 set -euo pipefail
 
 ENV_FILE=".env"
-WITH_TELEGRAM=false
+WITH_TELEGRAM=true
 ADD_TELEGRAM_CHAT_IDS=""
 SKIP_START=false
 AUTO_UPDATE=true
 
 usage() {
   cat <<EOF
-Usage: $0 [--with-telegram] [--add-telegram-chat-ids "123,456"] [--env-file FILE] [--no-start]
+Usage: $0 [--no-telegram] [--add-telegram-chat-ids "123,456"] [--env-file FILE] [--no-start]
 
 Flags:
-  --with-telegram               Enable Telegram bot setup (prompts for token, dashboard creds, allowed chat IDs)
+  --with-telegram               (default) Telegram bot setup enabled
+  --no-telegram                 Disable Telegram setup
   --add-telegram-chat-ids IDs   Comma-separated chat IDs to append to the allowlist (can be used standalone)
   --allow-telegram-chat IDs     (deprecated alias of --add-telegram-chat-ids)
   --env-file FILE           Override env file path (default: .env)
@@ -32,6 +33,10 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --with-telegram)
       WITH_TELEGRAM=true
+      shift
+      ;;
+    --no-telegram)
+      WITH_TELEGRAM=false
       shift
       ;;
     --add-telegram-chat-ids|--allow-telegram-chat)
@@ -149,7 +154,7 @@ cleanup_var() {
 }
 
 # Fast path: append Telegram chat IDs without running the full wizard
-if [[ -n "$ADD_TELEGRAM_CHAT_IDS" && "$WITH_TELEGRAM" != "true" ]]; then
+if [[ -n "$ADD_TELEGRAM_CHAT_IDS" ]]; then
   step=0
   say_header "PayRam Analytics MCP Setup"
   say_info "Fast path: appending Telegram chat IDs only"
