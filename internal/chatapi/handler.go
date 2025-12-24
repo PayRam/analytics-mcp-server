@@ -3,11 +3,13 @@ package chatapi
 import (
 	"bytes"
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
@@ -22,21 +24,29 @@ type Handler struct {
 	openaiModel string
 	openaiBase  string
 	mcp         *chatserver.MCPClient
+	auth        func(ctx context.Context) (string, error)
 	apiKey      string
+	botBypass   string
 	allowed     []*net.IPNet
 	httpClient  *http.Client
 	logger      *logrus.Entry
 }
 
 // NewHandler constructs a chat API handler.
-func NewHandler(logger *logrus.Entry, apiKey, allowlist, openaiKey, openaiModel, openaiBase, mcpURL string) *Handler {
+func NewHandler(logger *logrus.Entry, apiKey, allowlist, botBypass, openaiKey, openaiModel, openaiBase, mcpURL string, authProvider func(ctx context.Context) (string, error)) *Handler {
 	oc := &http.Client{Timeout: 30 * time.Second}
+	mcpClient := chatserver.NewMCPClient(mcpURL)
+	if authProvider != nil {
+		mcpClient.SetAuthProvider(authProvider)
+	}
 	return &Handler{
 		openaiKey:   openaiKey,
 		openaiModel: openaiModel,
 		openaiBase:  strings.TrimRight(openaiBase, "/"),
-		mcp:         chatserver.NewMCPClient(mcpURL),
+		mcp:         mcpClient,
+		auth:        authProvider,
 		apiKey:      apiKey,
+		botBypass:   botBypass,
 		allowed:     parseAllowlist(allowlist),
 		httpClient:  oc,
 		logger:      logger,
@@ -45,6 +55,7 @@ func NewHandler(logger *logrus.Entry, apiKey, allowlist, openaiKey, openaiModel,
 
 func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/v1/chat/completions", h.handleChat)
+	mux.HandleFunc("/v1/chat/completions/telegram", h.handleChatTelegram)
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
@@ -52,6 +63,15 @@ func (h *Handler) Register(mux *http.ServeMux) {
 }
 
 func (h *Handler) handleChat(w http.ResponseWriter, r *http.Request) {
+	h.handleChatWithPrompt(w, r, systemPrompt, "markdown")
+}
+
+func (h *Handler) handleChatTelegram(w http.ResponseWriter, r *http.Request) {
+	h.handleChatWithPrompt(w, r, systemPromptTelegram, "html")
+}
+
+// responseFormat: "markdown" escapes MarkdownV2; "html" leaves content as-is for parse_mode=HTML.
+func (h *Handler) handleChatWithPrompt(w http.ResponseWriter, r *http.Request, prompt func() string, responseFormat string) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -86,7 +106,7 @@ func (h *Handler) handleChat(w http.ResponseWriter, r *http.Request) {
 	}
 	oaTools := convertTools(tools)
 
-	system := OAChatMessage{Role: "system", Content: systemPrompt()}
+	system := OAChatMessage{Role: "system", Content: prompt()}
 	messages := append([]OAChatMessage{system}, req.Messages...)
 
 	firstReq := ChatCompletionRequest{
@@ -110,12 +130,24 @@ func (h *Handler) handleChat(w http.ResponseWriter, r *http.Request) {
 
 	choice := firstResp.Choices[0]
 	if len(choice.Message.ToolCalls) == 0 {
+		if responseFormat == "markdown" {
+			escapeMarkdownResponse(&firstResp)
+		} else if responseFormat == "html" {
+			sanitizeTelegramHTMLResponse(&firstResp)
+		}
 		writeJSON(w, firstResp, http.StatusOK)
 		return
 	}
 
 	// Execute tool calls via MCP, then ask LLM again with tool results.
 	authToken := bearerToken(r.Header.Get("Authorization"))
+	if authToken == "" && h.auth != nil {
+		if tok, err := h.auth(ctx); err == nil {
+			authToken = tok
+		} else {
+			h.logger.Warnf("auth provider failed: %v", err)
+		}
+	}
 	toolMessages := make([]OAChatMessage, 0, len(choice.Message.ToolCalls))
 	for _, tc := range choice.Message.ToolCalls {
 		args := tc.Function.Arguments
@@ -154,6 +186,11 @@ func (h *Handler) handleChat(w http.ResponseWriter, r *http.Request) {
 		h.logger.Errorf("openai second call error: %v", err)
 		http.Error(w, fmt.Sprintf("openai error: %v", err), http.StatusBadGateway)
 		return
+	}
+	if responseFormat == "markdown" {
+		escapeMarkdownResponse(&secondResp)
+	} else if responseFormat == "html" {
+		sanitizeTelegramHTMLResponse(&secondResp)
 	}
 	writeJSON(w, secondResp, http.StatusOK)
 }
@@ -197,6 +234,13 @@ func (h *Handler) authorize(r *http.Request) bool {
 	ip := parseRemoteIP(r.RemoteAddr)
 	if isAllowed(ip, h.allowed) {
 		return true
+	}
+	if h.botBypass != "" {
+		if v := strings.TrimSpace(r.Header.Get("X-Telegram-Bot-Token")); v != "" {
+			if subtle.ConstantTimeCompare([]byte(v), []byte(h.botBypass)) == 1 {
+				return true
+			}
+		}
 	}
 	if h.apiKey == "" {
 		return true
@@ -283,6 +327,28 @@ Reply concisely with the actual data or a clear "No records" if the tool returns
 Always format your final answer as Markdown (use bullets, tables, or code blocks when useful).`
 }
 
+// systemPromptTelegram is tailored for Telegram with MarkdownV2-safe output.
+func systemPromptTelegram() string {
+	return "You are PayRam's Telegram analytics assistant. ALWAYS use MCP tools; never guess or ask for more details. Respond using Telegram HTML (parse_mode=HTML).\n\n" +
+		"TOOL SELECTION GUIDE:\n" +
+		"- payram_daily_stats: daily breakdown; default days=30 if none given.\n" +
+		"- payram_transaction_counts: counts over time (days=N).\n" +
+		"- payram_payments_summary: totals; use date_filter=last_7_days/last_30_days or days=N.\n" +
+		"- payram_numbers_summary: key metrics (totals, users).\n" +
+		"- payram_currency_breakdown: specific currency (set currency_code).\n" +
+		"- payram_deposit_distribution: currency distribution breakdown.\n" +
+		"- payram_user_growth or payram_paying_users: new vs recurring users.\n" +
+		"- payram_recent_transactions: recent transactions table.\n" +
+		"- payram_compare_periods: period comparisons.\n" +
+		"- payram_fetch_graph_data: graph by id (discover via payram_discover_analytics).\n\n" +
+		"OPERATING RULES:\n" +
+		"- Assume defaults: if no period, use last_30_days.\n" +
+		"- If a tool returns no data: reply 'No records for that period'.\n" +
+		"- If a tool errors: mention it briefly.\n" +
+		"- Respond concisely (<600 chars). Use ONLY Telegram-allowed HTML tags: <b>/<strong>, <i>/<em>, <u>/<ins>, <s>/<del>/<strike>, <code>, <pre>, <a href=...>, and <br>. No other tags.\n" +
+		"- Format with brief sections: start labels in <b>...</b>, use <br> for new lines, and use plain text bullets like '• item' (no <ul>/<li>). Avoid tables."
+}
+
 // convert MCP tool descriptors to OpenAI tools schema.
 func convertTools(tools []protocol.ToolDescriptor) []OATool {
 	out := make([]OATool, 0, len(tools))
@@ -362,6 +428,111 @@ func sanitizeTemperature(model string, t *float64) *float64 {
 		return nil
 	}
 	return t
+}
+
+// escapeMarkdownResponse ensures Telegram MarkdownV2 safety for assistant messages.
+func escapeMarkdownResponse(resp *ChatCompletionResponse) {
+	for i := range resp.Choices {
+		resp.Choices[i].Message.Content = escapeMarkdownV2(resp.Choices[i].Message.Content)
+	}
+}
+
+// sanitizeTelegramHTMLResponse removes/rewrites unsupported HTML tags for Telegram parse_mode=HTML.
+func sanitizeTelegramHTMLResponse(resp *ChatCompletionResponse) {
+	for i := range resp.Choices {
+		resp.Choices[i].Message.Content = sanitizeTelegramHTML(resp.Choices[i].Message.Content)
+	}
+}
+
+// sanitizeTelegramHTML keeps a small subset of tags (b,strong,i,em,u,ins,s,strike,del,code,pre,a,br)
+// and rewrites common list/paragraph tags into simple line breaks to avoid Telegram 400s.
+func sanitizeTelegramHTML(s string) string {
+	replacer := strings.NewReplacer(
+		"<ul>", "",
+		"</ul>", "",
+		"<ol>", "",
+		"</ol>", "",
+		"<li>", "• ",
+		"</li>", "<br>",
+		"<p>", "",
+		"</p>", "<br>",
+		"<div>", "",
+		"</div>", "<br>",
+		"<br/>", "<br>",
+		"<br />", "<br>",
+		"<h1>", "<b>",
+		"</h1>", "</b><br>",
+		"<h2>", "<b>",
+		"</h2>", "</b><br>",
+		"<h3>", "<b>",
+		"</h3>", "</b><br>",
+		"<strong>", "<b>",
+		"</strong>", "</b>",
+		"<em>", "<i>",
+		"</em>", "</i>",
+		"<hr>", "<br>",
+	)
+	clean := replacer.Replace(s)
+	clean = strings.ReplaceAll(clean, "<br>", "\n")
+
+	allowed := map[string]struct{}{
+		"b": {}, "strong": {}, "i": {}, "em": {}, "u": {}, "ins": {}, "s": {}, "del": {}, "strike": {}, "code": {}, "pre": {}, "a": {},
+	}
+	re := regexp.MustCompile(`<(/?)([a-zA-Z0-9]+)([^>]*)>`)
+	clean = re.ReplaceAllStringFunc(clean, func(tag string) string {
+		matches := re.FindStringSubmatch(tag)
+		if len(matches) < 3 {
+			return ""
+		}
+		name := strings.ToLower(matches[2])
+		if _, ok := allowed[name]; !ok {
+			return ""
+		}
+		// For <a>, preserve href attribute only.
+		if name == "a" {
+			// keep href if present
+			hrefRe := regexp.MustCompile(`href\s*=\s*"([^"]+)"`)
+			href := hrefRe.FindString(matches[3])
+			if matches[1] == "/" {
+				return "</a>"
+			}
+			if href == "" {
+				return ""
+			}
+			return "<a " + href + ">"
+		}
+		// Self-closing br stays
+		if name == "br" {
+			return "<br>"
+		}
+		if matches[1] == "/" {
+			return "</" + name + ">"
+		}
+		return "<" + name + ">"
+	})
+
+	return clean
+}
+
+// escapeMarkdownV2 escapes reserved characters for Telegram MarkdownV2 parse_mode.
+func escapeMarkdownV2(s string) string {
+	replacer := strings.NewReplacer(
+		"[", "\\[",
+		"]", "\\]",
+		"(", "\\(",
+		")", "\\)",
+		"~", "\\~",
+		"`", "\\`",
+		">", "\\>",
+		"#", "\\#",
+		"+", "\\+",
+		"=", "\\=",
+		"|", "\\|",
+		"{", "\\{",
+		"}", "\\}",
+		"!", "\\!",
+	)
+	return replacer.Replace(s)
 }
 
 // bearerToken extracts the token portion from an Authorization header value.

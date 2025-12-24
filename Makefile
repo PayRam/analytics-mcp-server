@@ -7,10 +7,11 @@ BIN_DIR ?= bin
 PKG := ./...
 
 # Binaries
-BIN_APP    ?= payram-analytics         # combined MCP + Chat API
-BIN_MCP    ?= payram-analytics-mcp     # MCP HTTP only
-BIN_CHAT   ?= payram-analytics-chat    # Chat API only
-BIN_AGENT  ?= payram-analytics-agent   # Supervisor/agent entrypoint
+BIN_APP    ?= payram-analytics               # combined MCP + Chat API
+BIN_MCP    ?= payram-analytics-mcp           # MCP HTTP only
+BIN_CHAT   ?= payram-analytics-chat          # Chat API only
+BIN_AGENT  ?= payram-analytics-agent         # Supervisor/agent entrypoint
+BIN_BOT    ?= payram-analytics-telegram-bot  # Telegram bot
 AGENT_HOME ?= $(PWD)/.agent-home
 GOFILES := $(shell find . -type f -name '*.go' -not -path './vendor/*')
 MCP_SERVER_URL ?= http://localhost:3333/
@@ -31,10 +32,12 @@ help:
 	@echo "  make build-mcp            Build mcp-server binary -> $(BIN_DIR)/$(BIN_MCP)"
 	@echo "  make build-chat           Build Chat API binary -> $(BIN_DIR)/$(BIN_CHAT)"
 	@echo "  make build-agent          Build supervisor agent -> $(BIN_DIR)/$(BIN_AGENT)"
-	@echo "  make build-all            Build app, mcp-server, Chat API, and agent"
+	@echo "  make build-all            Build app, mcp-server, Chat API, bot, and agent"
 	@echo "  make run-app              Run combined app (MCP 3333 + Chat API 2358)"
+	@echo "  make run-bot              Run Telegram bot"
 	@echo "  make run-mcp              Run mcp-server server on :3333"
 	@echo "  make run-chat             Run Chat API on :2358 (requires OPENAI_API_KEY)"
+	@echo "  make run-all              Run supervisor with chat, mcp, and bot"
 	@echo "  make run-agent            Run supervisor agent on :9900 (PAYRAM_AGENT_HOME=$(AGENT_HOME))"
 	@echo "  make precommit            fmt-check + vet + test + build-all"
 	@echo "  make commit               Guide an interactive conventional commit"
@@ -89,12 +92,33 @@ build-agent:
 	@mkdir -p $(BIN_DIR)
 	$(GO) build -o $(BIN_DIR)/$(BIN_AGENT) cmd/agent/main.go
 
+.PHONY: build-bot
+build-bot:
+	@mkdir -p $(BIN_DIR)
+	$(GO) build -o $(BIN_DIR)/$(BIN_BOT) cmd/telegram-bot/main.go
+
 .PHONY: build-all
-build-all: build-app build-mcp build-chat build-agent
+build-all: build-app build-mcp build-chat build-bot build-agent
 
 .PHONY: run-app
 run-app:
-	$(GO) run .
+	@set -euo pipefail; \
+	TMP=$$(mktemp); \
+	( $(GO) run ./cmd/telegram-bot & echo $$! > $$TMP ); \
+	BOT_PID=$$(cat $$TMP); \
+	$(GO) run .; \
+	kill $$BOT_PID 2>/dev/null || true; \
+	rm -f $$TMP
+
+.PHONY: run-bot
+run-bot:
+	$(GO) run ./cmd/telegram-bot
+
+.PHONY: run-all
+run-all: build-mcp build-chat build-bot
+	@echo "Reseeding agent home at $(AGENT_HOME)"
+	@rm -rf $(AGENT_HOME)/current $(AGENT_HOME)/releases/0.0.0
+	$(MAKE) run-agent
 
 .PHONY: run-mcp
 run-mcp:
@@ -105,11 +129,12 @@ run-chat:
 	$(GO) run ./cmd/chat-api --port $(CHAT_API_PORT) --mcp $(MCP_SERVER_URL) --openai-model $(OPENAI_MODEL)
 
 .PHONY: run-agent
-run-agent: build-mcp build-chat
+run-agent: build-mcp build-chat build-bot
 	@mkdir -p $(AGENT_HOME)
 	PAYRAM_AGENT_HOME=$(AGENT_HOME) \
 	PAYRAM_AGENT_SEED_CHAT_SRC=$(BIN_DIR)/$(BIN_CHAT) \
 	PAYRAM_AGENT_SEED_MCP_SRC=$(BIN_DIR)/$(BIN_MCP) \
+	PAYRAM_AGENT_SEED_BOT_SRC=$(BIN_DIR)/$(BIN_BOT) \
 	$(GO) run ./cmd/agent
 
 .PHONY: precommit

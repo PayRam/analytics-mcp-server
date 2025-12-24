@@ -677,7 +677,7 @@ func logsHandler(sup Supervisor) func(http.ResponseWriter, *http.Request) {
 
 		logs := sup.Logs(component, tail)
 		if logs == nil {
-			RespondError(w, http.StatusBadRequest, "INVALID_COMPONENT", "component must be chat or mcp")
+			RespondError(w, http.StatusBadRequest, "INVALID_COMPONENT", "component must be chat, mcp, or bot")
 			return
 		}
 

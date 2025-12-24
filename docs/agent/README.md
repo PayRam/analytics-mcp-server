@@ -32,9 +32,14 @@ Base URL defaults to `http://localhost:9900`.
 | `/admin/update/status` | GET | yes | Returns persisted update status (current, previous, last success/error, attempts).
 | `/admin/child/status` | GET | yes | Supervisor child status (chat, mcp: pid, restarts, last exit).
 | `/admin/child/restart` | POST | yes | Restarts both children.
-| `/admin/logs?component=chat|mcp&tail=N` | GET | yes | Recent buffered logs for a component (default tail 200).
+| `/admin/logs?component=chat|mcp|bot&tail=N` | GET | yes | Recent buffered logs for a component (default tail 200).
 | `/admin/secrets/openai` | PUT/DELETE | yes | PUT stores `openai_api_key` (body `{ "openai_api_key": "sk-..." }`); DELETE clears it. Never echoed back.
 | `/admin/secrets/status` | GET | yes | Reports if `openai_api_key` is set and its source (`env|state|missing`).
+
+### Telegram add-on (auth bypass + allowlist)
+- Chat API trusts requests carrying header `X-Telegram-Bot-Token` that matches `CHAT_API_BOT_BYPASS_TOKEN` (defaults to `TELEGRAM_BOT_TOKEN`), allowing the bot to call `/v1/chat/completions` without the bearer key while retaining IP allowlist protections.
+- Allowed chat IDs are stored in `${PAYRAM_AGENT_HOME}/state/secrets.json` under `telegram_allowed_chats`. The setup script can append IDs via `--allow-telegram-chat "123,456"`; restart the container or use `/admin/child/restart` to reload.
+- Set `TELEGRAM_ENABLED=true` (the setup script does this with `--with-telegram`) to start the supervised bot child; its logs appear under `component=bot`.
 
 ## Update settings
 - `PAYRAM_AGENT_UPDATE_BASE_URL` (required): base hosting `<channel>/manifest.json` and `.sig`.
