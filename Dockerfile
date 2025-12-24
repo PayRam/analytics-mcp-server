@@ -26,6 +26,10 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
     go build -o /out/payram-analytics-mcp ./cmd/mcp-server
 
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+    go build -o /out/payram-analytics-telegram-bot ./cmd/telegram-bot
+
 ############################
 # Runtime stage
 ############################
@@ -36,6 +40,7 @@ RUN apt-get update && apt-get install -y ca-certificates curl && rm -rf /var/lib
 COPY --from=builder /out/payram-analytics-agent /app/agent
 COPY --from=builder /out/payram-analytics-chat  /app/chat
 COPY --from=builder /out/payram-analytics-mcp   /app/mcp
+COPY --from=builder /out/payram-analytics-telegram-bot /app/telegram-bot
 
 # Persist updates + releases
 VOLUME ["/var/lib/payram-mcp"]

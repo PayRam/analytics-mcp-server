@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/payram/payram-analytics-mcp-server/internal/chatapi"
 	"github.com/payram/payram-analytics-mcp-server/internal/logging"
+	"github.com/payram/payram-analytics-mcp-server/internal/payramauth"
 	"github.com/payram/payram-analytics-mcp-server/internal/version"
 	"github.com/sirupsen/logrus"
 )
@@ -30,6 +32,10 @@ func main() {
 	openaiModel := envOr("OPENAI_MODEL", "gpt-4o-mini")
 	openaiBase := envOr("OPENAI_BASE_URL", "https://api.openai.com/v1")
 	mcpURL := envOr("MCP_SERVER_URL", "http://localhost:3333/")
+	botBypassToken := envOr("CHAT_API_BOT_BYPASS_TOKEN", envOr("TELEGRAM_BOT_TOKEN", ""))
+	payramBase := envOr("PAYRAM_ANALYTICS_BASE_URL", "")
+	payramUser := envOr("PAYRAM_DASHBOARD_USERNAME", "")
+	payramPass := envOr("PAYRAM_DASHBOARD_PASSWORD", "")
 
 	flag.StringVar(&port, "port", port, "port to listen on")
 	flag.StringVar(&apiKey, "api-key", apiKey, "chat API bearer key")
@@ -38,13 +44,23 @@ func main() {
 	flag.StringVar(&openaiModel, "openai-model", openaiModel, "OpenAI model")
 	flag.StringVar(&openaiBase, "openai-base", openaiBase, "OpenAI base URL")
 	flag.StringVar(&mcpURL, "mcp", mcpURL, "MCP server URL (HTTP)")
+	flag.StringVar(&botBypassToken, "bot-bypass-token", botBypassToken, "trusted Telegram bot token to bypass bearer auth")
+	flag.StringVar(&payramBase, "payram-base", payramBase, "PayRam analytics base URL for dashboard auth")
+	flag.StringVar(&payramUser, "payram-user", payramUser, "PayRam dashboard username")
+	flag.StringVar(&payramPass, "payram-pass", payramPass, "PayRam dashboard password")
 	flag.Parse()
 
 	if strings.TrimSpace(openaiKey) == "" {
 		logger.Warn("OPENAI_API_KEY not set; chat API will fail OpenAI calls until configured")
 	}
 
-	h := chatapi.NewHandler(logger, apiKey, allowlist, openaiKey, openaiModel, openaiBase, mcpURL)
+	var authProvider func(ctx context.Context) (string, error)
+	if strings.TrimSpace(payramBase) != "" && strings.TrimSpace(payramUser) != "" && strings.TrimSpace(payramPass) != "" {
+		tm := payramauth.NewTokenManager(payramBase, payramUser, payramPass)
+		authProvider = tm.GetAccessToken
+	}
+
+	h := chatapi.NewHandler(logger, apiKey, allowlist, botBypassToken, openaiKey, openaiModel, openaiBase, mcpURL, authProvider)
 	mux := http.NewServeMux()
 	h.Register(mux)
 	mux.HandleFunc("/version", func(w http.ResponseWriter, _ *http.Request) {

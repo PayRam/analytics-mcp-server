@@ -85,8 +85,33 @@ curl -X POST http://localhost:2358/v1/chat/completions \
 
 Configuration (.env or env vars):
 - `CHAT_API_KEY` (required for auth)
+- `CHAT_API_BOT_BYPASS_TOKEN` (optional) if set, requests carrying header `X-Telegram-Bot-Token: <token>` bypass bearer auth (intended for the trusted Telegram bot)
 - `OPENAI_API_KEY` (required), `OPENAI_MODEL` (default `gpt-4o-mini`), `OPENAI_BASE_URL` (default `https://api.openai.com/v1`)
 - `MCP_SERVER_URL` (HTTP endpoint for MCP server; default `http://localhost:3333/`)
+
+## Agent + Docker setup (with optional Telegram add-on)
+Use the helper script to generate `.env`, seed secrets, and run the containerized agent (supervisor for chat + MCP):
+
+```sh
+./setup_payram_agent.sh [--with-telegram] [--allow-telegram-chat "123,456"] [--env-file my.env] [--no-start]
+```
+
+Prompts (core): PayRam base URL, optional OpenAI key.
+
+When `--with-telegram`:
+- Prompts for `TELEGRAM_BOT_TOKEN`, optional `TELEGRAM_WEBHOOK_BASE_URL` (leave empty to poll), dashboard username/password, and allowed chat IDs (comma-separated). Values are stored in `${HOST_AGENT_HOME:-$PWD/.agent-home}/state/secrets.json` with `0600` perms and mirrored into `.env` as `TELEGRAM_*`.
+- Sets `CHAT_API_BOT_BYPASS_TOKEN` to the Telegram bot token so the bot can call `/v1/chat/completions` without bearer auth.
+- Enables the supervised Telegram bot service (inside the agent container) when `TELEGRAM_ENABLED=true`; the bot only responds to chat IDs present in `telegram_allowed_chats`.
+
+Allowlist updates after deploy:
+- Run the script again with `--allow-telegram-chat "<chat_id>[,<chat_id2>]"` to append chat IDs to the allowlist in `state/secrets.json`; re-run without `--no-start` to restart the container, or manually restart your Docker container for changes to take effect.
+
+Bot service notes:
+- Default Chat API target: `http://127.0.0.1:2358/v1/chat/completions`; override with `TELEGRAM_CHAT_API_URL` if needed.
+- Logs are available via the agent admin endpoint: `/admin/logs?component=bot&tail=200`.
+- Only long-polling is implemented by default; set `TELEGRAM_WEBHOOK_BASE_URL` to introduce webhook mode later.
+
+Generated `.env` includes defaults for ports (agent `9900`, chat `2358`, MCP `3333`), update channel, allowlist (`PAYRAM_AGENT_ADMIN_ALLOWLIST`), and proxying chat via the agent.
 
 ## Structure
 - `main.go`: wires stdin/stdout loop to the MCP server.
