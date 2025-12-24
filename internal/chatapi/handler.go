@@ -130,9 +130,10 @@ func (h *Handler) handleChatWithPrompt(w http.ResponseWriter, r *http.Request, p
 
 	choice := firstResp.Choices[0]
 	if len(choice.Message.ToolCalls) == 0 {
-		if responseFormat == "markdown" {
+		switch responseFormat {
+		case "markdown":
 			escapeMarkdownResponse(&firstResp)
-		} else if responseFormat == "html" {
+		case "html":
 			sanitizeTelegramHTMLResponse(&firstResp)
 		}
 		writeJSON(w, firstResp, http.StatusOK)
@@ -187,9 +188,10 @@ func (h *Handler) handleChatWithPrompt(w http.ResponseWriter, r *http.Request, p
 		http.Error(w, fmt.Sprintf("openai error: %v", err), http.StatusBadGateway)
 		return
 	}
-	if responseFormat == "markdown" {
+	switch responseFormat {
+	case "markdown":
 		escapeMarkdownResponse(&secondResp)
-	} else if responseFormat == "html" {
+	case "html":
 		sanitizeTelegramHTMLResponse(&secondResp)
 	}
 	writeJSON(w, secondResp, http.StatusOK)
