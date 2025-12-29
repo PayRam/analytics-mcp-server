@@ -4,6 +4,7 @@ set -euo pipefail
 ENV_FILE=".env"
 WITH_TELEGRAM=true
 ADD_TELEGRAM_CHAT_IDS=""
+ADD_TELEGRAM_USERNAMES=""
 SKIP_START=false
 AUTO_UPDATE=true
 
@@ -15,6 +16,7 @@ Flags:
   --with-telegram               (default) Telegram bot setup enabled
   --no-telegram                 Disable Telegram setup
   --add-telegram-chat-ids IDs   Comma-separated chat IDs to append to the allowlist (can be used standalone)
+  --add-telegram-usernames IDs  Comma-separated usernames (@ or t.me/ accepted) to append to the allowlist (can be used standalone)
   --allow-telegram-chat IDs     (deprecated alias of --add-telegram-chat-ids)
   --env-file FILE           Override env file path (default: .env)
   --no-start                Do not prompt to start docker container
@@ -41,6 +43,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --add-telegram-chat-ids|--allow-telegram-chat)
       ADD_TELEGRAM_CHAT_IDS="${2:-}"
+      shift 2
+      ;;
+    --add-telegram-usernames)
+      ADD_TELEGRAM_USERNAMES="${2:-}"
       shift 2
       ;;
     --env-file)
@@ -153,11 +159,51 @@ cleanup_var() {
   printf '%s' "$v"
 }
 
-# Fast path: append Telegram chat IDs without running the full wizard
-if [[ -n "$ADD_TELEGRAM_CHAT_IDS" ]]; then
+# JSON helpers (minimal, shell-only)
+escape_json() {
+  printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
+}
+
+read_json_value() {
+  local file="$1" key="$2"
+  if [[ ! -f "$file" ]]; then
+    return
+  fi
+  tr '\n' ' ' <"$file" | sed -n "s/.*\"$key\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" | head -n1
+}
+
+read_json_array() {
+  local file="$1" key="$2"
+  if [[ ! -f "$file" ]]; then
+    return
+  fi
+  tr '\n' ' ' <"$file" | sed -n "s/.*\"$key\"[[:space:]]*:[[:space:]]*\[\([^]]*\)\].*/\1/p" | head -n1
+}
+
+merge_chat_ids() {
+  # Args: existing_csv new_csv -> outputs unique CSV
+  local existing="$1" incoming="$2"
+  local combined="$existing,$incoming"
+  local out=""
+  local seen=""
+  IFS=',' read -r -a parts <<<"$combined"
+  for p in "${parts[@]}"; do
+    p="$(echo "$p" | xargs)"
+    [[ -z "$p" ]] && continue
+    if [[ ",$seen," != *,"$p",* ]]; then
+      seen+="$p,"
+      out+="$p,"
+    fi
+  done
+  out="${out%,}"
+  printf '%s' "$out"
+}
+
+# Fast path: append Telegram chat IDs/usernames without running the full wizard
+if [[ -n "$ADD_TELEGRAM_CHAT_IDS" || -n "$ADD_TELEGRAM_USERNAMES" ]]; then
   step=0
   say_header "PayRam Analytics MCP Setup"
-  say_info "Fast path: appending Telegram chat IDs only"
+  say_info "Fast path: appending Telegram allowlist entries"
 
   HOST_AGENT_HOME=${HOST_AGENT_HOME:-"$PWD/.agent-home"}
   STATE_DIR="$HOST_AGENT_HOME/state"
@@ -169,10 +215,11 @@ if [[ -n "$ADD_TELEGRAM_CHAT_IDS" ]]; then
   fi
 
   ADD_TELEGRAM_CHAT_IDS_CLEAN="${ADD_TELEGRAM_CHAT_IDS// /}"
+  ADD_TELEGRAM_USERNAMES_CLEAN="${ADD_TELEGRAM_USERNAMES// /}"
 
   existing_allowed_raw="$(read_json_array "$SECRETS_PATH" "telegram_allowed_chats")"
   existing_allowed_csv="$(echo "$existing_allowed_raw" | tr -d '"' | tr ' ' ',' | sed 's/,\+/,/g; s/^,//; s/,$//')"
-  merged_allowed_csv="$(merge_chat_ids "$existing_allowed_csv" "$ADD_TELEGRAM_CHAT_IDS_CLEAN")"
+  merged_allowed_csv="$(merge_chat_ids "$existing_allowed_csv" "$ADD_TELEGRAM_CHAT_IDS_CLEAN,$ADD_TELEGRAM_USERNAMES_CLEAN")"
 
   bot_token="$(read_json_value "$SECRETS_PATH" "telegram_bot_token")"
   base_url="$(read_json_value "$SECRETS_PATH" "telegram_base_url")"
@@ -215,17 +262,17 @@ if [[ -n "$ADD_TELEGRAM_CHAT_IDS" ]]; then
   chmod 600 "$SECRETS_PATH.tmp" 2>/dev/null || true
   mv "$SECRETS_PATH.tmp" "$SECRETS_PATH"
 
-  say_info "Appended chat IDs: $ADD_TELEGRAM_CHAT_IDS"
+  say_info "Appended allowlist entries: chat_ids=[$ADD_TELEGRAM_CHAT_IDS] usernames=[$ADD_TELEGRAM_USERNAMES]"
   echo "  Secrets: $SECRETS_PATH"
 
   if command -v docker >/dev/null 2>&1 && docker ps --format '{{.Names}}' | grep -q '^payram-analytics-agent$'; then
-    if prompt_yes_no "Restart running container payram-analytics-agent now to apply chat IDs?" "y"; then
+    if prompt_yes_no "Restart running container payram-analytics-agent now to apply the updates?" "y"; then
       docker restart payram-analytics-agent || say_warn "Restart failed; restart manually."
     else
-      say_warn "Remember to restart payram-analytics-agent to apply chat IDs."
+      say_warn "Remember to restart payram-analytics-agent to apply the updates."
     fi
   else
-    say_warn "No running container named payram-analytics-agent detected; start/restart it to apply chat IDs."
+    say_warn "No running container named payram-analytics-agent detected; start/restart it to apply the updates."
   fi
 
   exit 0
@@ -259,46 +306,6 @@ http_post_raw() {
   printf '%s' "$body"
 }
 
-# JSON helpers (minimal, shell-only)
-escape_json() {
-  printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
-}
-
-read_json_value() {
-  local file="$1" key="$2"
-  if [[ ! -f "$file" ]]; then
-    return
-  fi
-  tr '\n' ' ' <"$file" | sed -n "s/.*\"$key\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" | head -n1
-}
-
-read_json_array() {
-  local file="$1" key="$2"
-  if [[ ! -f "$file" ]]; then
-    return
-  fi
-  tr '\n' ' ' <"$file" | sed -n "s/.*\"$key\"[[:space:]]*:[[:space:]]*\[\([^]]*\)\].*/\1/p" | head -n1
-}
-
-merge_chat_ids() {
-  # Args: existing_csv new_csv -> outputs unique CSV
-  local existing="$1" incoming="$2"
-  local combined="$existing,$incoming"
-  local out=""
-  local seen=""
-  IFS=',' read -r -a parts <<<"$combined"
-  for p in "${parts[@]}"; do
-    p="$(echo "$p" | xargs)"
-    [[ -z "$p" ]] && continue
-    if [[ ",$seen," != *,"$p",* ]]; then
-      seen+="$p,"
-      out+="$p,"
-    fi
-  done
-  out="${out%,}"
-  printf '%s' "$out"
-}
-
 test_payram_login() {
   local base="$1"
   local user="$2"
@@ -306,6 +313,8 @@ test_payram_login() {
 
   local url="${base%/}/api/v1/signin"
   local payload="{\"email\":\"$user\",\"password\":\"$pass\"}"
+
+  say_info "Processing login (this may take a few seconds)..."
 
   local status body
   if command -v curl >/dev/null 2>&1; then
@@ -330,29 +339,6 @@ test_payram_login() {
   fi
 
   say_info "Login succeeded"
-}
-
-require_cmd() {
-  local cmd="$1"
-  if ! command -v "$cmd" >/dev/null 2>&1; then
-    say_error "Required command not found: $cmd"
-    exit 1
-  fi
-}
-
-generate_token() {
-  if command -v openssl >/dev/null 2>&1; then
-    openssl rand -hex 24
-    return
-  fi
-  if command -v python3 >/dev/null 2>&1; then
-    python3 - <<'PY'
-import secrets
-print(secrets.token_hex(24))
-PY
-    return
-  fi
-  date +%s%N | sha256sum | awk '{print $1}'
 }
 
 validate_http_url() {
@@ -381,14 +367,15 @@ PAYRAM_DASHBOARD_PASSWORD="$(prompt "PAYRAM_DASHBOARD_PASSWORD" "Admin password"
 PAYRAM_DASHBOARD_PASSWORD="$(cleanup_var "$PAYRAM_DASHBOARD_PASSWORD")"
 test_payram_login "$PAYRAM_ANALYTICS_BASE_URL" "$PAYRAM_DASHBOARD_USERNAME" "$PAYRAM_DASHBOARD_PASSWORD"
 
-next_step "OpenAI key (optional)"
-OPENAI_API_KEY="$(prompt "OPENAI_API_KEY" "OpenAI API key (leave empty to set later via agent secrets)" true true)"
+next_step "OpenAI key"
+OPENAI_API_KEY="$(prompt "OPENAI_API_KEY" "OpenAI API key" true false)"
 OPENAI_API_KEY="$(cleanup_var "$OPENAI_API_KEY")"
 
-next_step "Telegram bot (optional)"
+next_step "Telegram bot"
 TELEGRAM_BOT_TOKEN=""
 TELEGRAM_WEBHOOK_BASE_URL=""
 TELEGRAM_ALLOWED_CHAT_IDS=""
+TELEGRAM_ALLOWED_USERNAMES=""
 
 if [[ "$WITH_TELEGRAM" == "true" ]]; then
   TELEGRAM_BOT_TOKEN="$(prompt "TELEGRAM_BOT_TOKEN" "Telegram bot token from BotFather" true)"
@@ -400,7 +387,7 @@ TELEGRAM_BOT_TOKEN="$(cleanup_var "$TELEGRAM_BOT_TOKEN")"
 if [[ -n "$TELEGRAM_BOT_TOKEN" ]]; then
   TELEGRAM_WEBHOOK_BASE_URL=""  # webhook not prompted; default to polling
   echo
-  TELEGRAM_ALLOWED_CHAT_IDS="$(prompt "TELEGRAM_ALLOWED_CHAT_IDS" "Telegram chat id(s) allowed to use the bot (comma-separated, leave empty if unknown)" false true)"
+  TELEGRAM_ALLOWED_USERNAMES="$(prompt "TELEGRAM_ALLOWED_USERNAMES" "Telegram username(s) allowed (with or without @ or t.me/, comma-separated, e.g., user1,@user2,t.me/user3)" false false)"
 fi
 
 next_step "Auto-update"
@@ -410,15 +397,22 @@ else
   AUTO_UPDATE=false
 fi
 
-if [[ -n "$ADD_TELEGRAM_CHAT_IDS" ]]; then
+if [[ -n "$ADD_TELEGRAM_CHAT_IDS" || -n "$ADD_TELEGRAM_USERNAMES" ]]; then
   if [[ -n "$TELEGRAM_ALLOWED_CHAT_IDS" ]]; then
     TELEGRAM_ALLOWED_CHAT_IDS+=" ,$ADD_TELEGRAM_CHAT_IDS"
   else
     TELEGRAM_ALLOWED_CHAT_IDS="$ADD_TELEGRAM_CHAT_IDS"
   fi
+  if [[ -n "$ADD_TELEGRAM_USERNAMES" ]]; then
+    if [[ -n "$TELEGRAM_ALLOWED_USERNAMES" ]]; then
+      TELEGRAM_ALLOWED_USERNAMES+=" ,$ADD_TELEGRAM_USERNAMES"
+    else
+      TELEGRAM_ALLOWED_USERNAMES="$ADD_TELEGRAM_USERNAMES"
+    fi
+  fi
 fi
 TELEGRAM_ALLOWED_CHAT_IDS="$(cleanup_var "$TELEGRAM_ALLOWED_CHAT_IDS")"
-ADD_TELEGRAM_CHAT_IDS="$(cleanup_var "$ADD_TELEGRAM_CHAT_IDS")"
+TELEGRAM_ALLOWED_USERNAMES="$(cleanup_var "$TELEGRAM_ALLOWED_USERNAMES")"
 
 # --- Constants you requested ---
 
@@ -432,9 +426,6 @@ OPENAI_MODEL="gpt-4o-mini"
 
 # Chat API left open (relies on loopback binding / network controls)
 CHAT_API_KEY=""
-
-# Admin token (generated automatically)
-PAYRAM_AGENT_ADMIN_TOKEN="$(generate_token)"
 
 PAYRAM_CORE_URL="$PAYRAM_ANALYTICS_BASE_URL"
 
@@ -499,8 +490,12 @@ OPENAI_MODEL=$OPENAI_MODEL
 # =====================
 PAYRAM_AGENT_LISTEN_ADDR=$PAYRAM_AGENT_LISTEN_ADDR
 PAYRAM_AGENT_ADMIN_ALLOWLIST=$PAYRAM_AGENT_ADMIN_ALLOWLIST
-PAYRAM_AGENT_ADMIN_TOKEN=$PAYRAM_AGENT_ADMIN_TOKEN
 PAYRAM_CORE_URL=$PAYRAM_CORE_URL
+
+# Binary paths (for non-update mode; point to /app inside container)
+PAYRAM_AGENT_CHAT_BIN=/app/chat
+PAYRAM_AGENT_MCP_BIN=/app/mcp
+PAYRAM_AGENT_BOT_BIN=/app/telegram-bot
 
 # =====================
 # Child services
@@ -535,7 +530,6 @@ CHAT_API_BOT_BYPASS_TOKEN=
 TELEGRAM_ENABLED=${WITH_TELEGRAM}
 TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
 TELEGRAM_WEBHOOK_BASE_URL=${TELEGRAM_WEBHOOK_BASE_URL}
-TELEGRAM_ALLOWED_CHAT_IDS=${TELEGRAM_ALLOWED_CHAT_IDS}
 EOF
 
 chmod 600 "$ENV_FILE" 2>/dev/null || true
@@ -566,7 +560,7 @@ RUN_IMAGE=${RUN_IMAGE:-payram-analytics-agent:dev}
 echo "Using HOST_AGENT_HOME=$HOST_AGENT_HOME"
 
 # --- Persist secrets into state/secrets.json (host path) ---
-if [[ -n "$PAYRAM_DASHBOARD_USERNAME" || -n "$PAYRAM_DASHBOARD_PASSWORD" || -n "$TELEGRAM_BOT_TOKEN" || -n "$TELEGRAM_ALLOWED_CHAT_IDS" || -n "$ADD_TELEGRAM_CHAT_IDS" ]]; then
+if [[ -n "$PAYRAM_DASHBOARD_USERNAME" || -n "$PAYRAM_DASHBOARD_PASSWORD" || -n "$TELEGRAM_BOT_TOKEN" || -n "$TELEGRAM_ALLOWED_CHAT_IDS" || -n "$TELEGRAM_ALLOWED_USERNAMES" || -n "$ADD_TELEGRAM_CHAT_IDS" ]]; then
   STATE_DIR="$HOST_AGENT_HOME/state"
   SECRETS_PATH="$STATE_DIR/secrets.json"
   mkdir -p "$STATE_DIR"
@@ -577,11 +571,11 @@ if [[ -n "$PAYRAM_DASHBOARD_USERNAME" || -n "$PAYRAM_DASHBOARD_PASSWORD" || -n "
 
   echo "${CYAN}Writing secrets to${RESET} $SECRETS_PATH"
   TELEGRAM_ALLOWED_CHAT_IDS_CLEAN="${TELEGRAM_ALLOWED_CHAT_IDS// /}"
-  ADD_TELEGRAM_CHAT_IDS_CLEAN="${ADD_TELEGRAM_CHAT_IDS// /}"
+  TELEGRAM_ALLOWED_USERNAMES_CLEAN="${TELEGRAM_ALLOWED_USERNAMES// /}"
 
   existing_allowed_raw="$(read_json_array "$SECRETS_PATH" "telegram_allowed_chats")"
   existing_allowed_csv="$(echo "$existing_allowed_raw" | tr -d '"' | tr ' ' ',' | sed 's/,\+/,/g; s/^,//; s/,$//')"
-  merged_allowed_csv="$(merge_chat_ids "$existing_allowed_csv" "$TELEGRAM_ALLOWED_CHAT_IDS_CLEAN,$ADD_TELEGRAM_CHAT_IDS_CLEAN")"
+  merged_allowed_csv="$(merge_chat_ids "$existing_allowed_csv" "$TELEGRAM_ALLOWED_CHAT_IDS_CLEAN,$TELEGRAM_ALLOWED_USERNAMES_CLEAN")"
 
   existing_bot_token="$(read_json_value "$SECRETS_PATH" "telegram_bot_token")"
   existing_base_url="$(read_json_value "$SECRETS_PATH" "telegram_base_url")"
@@ -643,12 +637,46 @@ docker run --rm -d \
   ${RUN_IMAGE}
 CMD
 
+build_image() {
+  echo "${CYAN}Building docker image ${RUN_IMAGE}${RESET}"
+  docker build -t "${RUN_IMAGE}" . || { echo "${RED}ERROR${RESET}: docker build failed" >&2; exit 1; }
+}
+
+stop_existing_container() {
+  if docker ps -a --format '{{.Names}}' | grep -q '^payram-analytics-agent$'; then
+    echo "${CYAN}Stopping existing payram-analytics-agent container...${RESET}"
+    docker stop payram-analytics-agent >/dev/null 2>&1 || true
+    docker rm payram-analytics-agent >/dev/null 2>&1 || true
+  fi
+}
+
+start_container() {
+  mkdir -p "${HOST_AGENT_HOME}"
+  stop_existing_container
+  docker run --rm -d \
+    --name payram-analytics-agent \
+    --add-host=host.docker.internal:host-gateway \
+    -p 127.0.0.1:9900:9900 \
+    -p 127.0.0.1:2358:2358 \
+    -p 127.0.0.1:3333:3333 \
+    -v "${HOST_AGENT_HOME}:/var/lib/payram-mcp" \
+    --env-file "${ENV_FILE}" \
+    "${RUN_IMAGE}"
+}
+
 if [[ -n "$ADD_TELEGRAM_CHAT_IDS" ]]; then
   echo
   say_info "Telegram chat IDs appended. If a container is already running, restart is needed to load changes."
   if docker ps --format '{{.Names}}' | grep -q '^payram-analytics-agent$'; then
-    if prompt_yes_no "Restart running container now?" "y"; then
-      docker restart payram-analytics-agent || say_warn "Restart failed; please restart manually."
+    if prompt_yes_no "Rebuild image and restart running container now?" "y"; then
+      docker stop payram-analytics-agent >/dev/null 2>&1 || true
+      docker rm payram-analytics-agent >/dev/null 2>&1 || true
+      build_image
+      if start_container; then
+        echo "${GREEN}Container rebuilt and restarted.${RESET}"
+      else
+        say_warn "Restart failed; please start manually with the printed docker run command."
+      fi
     else
       say_warn "Remember to restart payram-analytics-agent to apply updated chat IDs."
     fi
@@ -664,18 +692,13 @@ if [[ "$SKIP_START" != "true" ]]; then
       echo "${RED}ERROR${RESET}: docker not found in PATH" >&2
       exit 1
     fi
-    mkdir -p "$HOST_AGENT_HOME"
+    build_image
     echo "${CYAN}Starting container...${RESET}"
-    docker run --rm -d \
-      --name payram-analytics-agent \
-      --add-host=host.docker.internal:host-gateway \
-      -p 127.0.0.1:9900:9900 \
-      -p 127.0.0.1:2358:2358 \
-      -p 127.0.0.1:3333:3333 \
-      -v "${HOST_AGENT_HOME}:/var/lib/payram-mcp" \
-      --env-file "${ENV_FILE}" \
-      "${RUN_IMAGE}"
-    echo "${GREEN}Container started in background. View logs with: docker logs -f payram-analytics-agent${RESET}"
+    if start_container; then
+      echo "${GREEN}Container started in background. View logs with: docker logs -f payram-analytics-agent${RESET}"
+    else
+      say_warn "Container did not start; please run the docker command manually."
+    fi
   fi
 else
   echo "${YELLOW}Skipping docker start (per --no-start).${RESET}"
@@ -685,9 +708,9 @@ echo
 echo "After it starts, test:"
 echo '  curl -s http://127.0.0.1:2358/health'
 echo '  curl -s http://127.0.0.1:3333/health'
-echo '  curl -s -H "X-MCP-Key: ${PAYRAM_AGENT_ADMIN_TOKEN}" http://127.0.0.1:9900/admin/version'
+echo '  curl -s http://127.0.0.1:9900/admin/version'
 if [[ -n "$PAYRAM_AGENT_UPDATE_BASE_URL" ]]; then
-  echo '  curl -s -H "X-MCP-Key: ${PAYRAM_AGENT_ADMIN_TOKEN}" "http://127.0.0.1:9900/admin/update/available?channel=stable"'
+  echo '  curl -s "http://127.0.0.1:9900/admin/update/available?channel=stable"'
 fi
 
 echo
@@ -705,5 +728,4 @@ if [[ -n "$TELEGRAM_BOT_TOKEN" ]]; then
 else
   echo "  Telegram:        disabled"
 fi
-echo "  Admin token:     stored in $ENV_FILE (header X-MCP-Key)"
 say_warn "Chat API is open by default; keep docker ports bound to 127.0.0.1 or add your own network controls."

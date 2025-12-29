@@ -101,10 +101,16 @@ func splitCSV(raw string) []string {
 }
 
 func allowedFromEnvOrSecrets(sec secrets.Secrets) []string {
-	if raw := os.Getenv("TELEGRAM_ALLOWED_CHAT_IDS"); raw != "" {
-		return splitCSV(raw)
+	var out []string
+	if raw := os.Getenv("TELEGRAM_ALLOWED_USERNAMES"); raw != "" {
+		out = append(out, splitCSV(raw)...)
 	}
-	return append([]string(nil), sec.TelegramAllowedChats...)
+	if raw := os.Getenv("TELEGRAM_ALLOWED_CHAT_IDS"); raw != "" {
+		out = append(out, splitCSV(raw)...)
+	} else {
+		out = append(out, sec.TelegramAllowedChats...)
+	}
+	return out
 }
 
 func durationOr(logger *logrus.Entry, key string, def time.Duration) time.Duration {

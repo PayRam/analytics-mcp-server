@@ -115,9 +115,16 @@ run-bot:
 	$(GO) run ./cmd/telegram-bot
 
 .PHONY: run-all
-run-all: build-mcp build-chat build-bot
-	@echo "Reseeding agent home at $(AGENT_HOME)"
-	@rm -rf $(AGENT_HOME)/current $(AGENT_HOME)/releases/0.0.0
+run-all:
+	@echo "Stopping any existing agent on port 9900..."
+	@-lsof -ti:9900 2>/dev/null | xargs -r kill -9 2>/dev/null || true
+	@sleep 1
+	@echo "Cleaning binaries and agent home..."
+	@rm -f $(BIN_DIR)/$(BIN_MCP) $(BIN_DIR)/$(BIN_CHAT) $(BIN_DIR)/$(BIN_BOT)
+	@rm -rf $(AGENT_HOME)/current $(AGENT_HOME)/releases
+	@echo "Building fresh binaries..."
+	@$(MAKE) build-mcp build-chat build-bot
+	@echo "Starting agent..."
 	$(MAKE) run-agent
 
 .PHONY: run-mcp
@@ -135,6 +142,9 @@ run-agent: build-mcp build-chat build-bot
 	PAYRAM_AGENT_SEED_CHAT_SRC=$(BIN_DIR)/$(BIN_CHAT) \
 	PAYRAM_AGENT_SEED_MCP_SRC=$(BIN_DIR)/$(BIN_MCP) \
 	PAYRAM_AGENT_SEED_BOT_SRC=$(BIN_DIR)/$(BIN_BOT) \
+	PAYRAM_AGENT_CHAT_BIN= \
+	PAYRAM_AGENT_MCP_BIN= \
+	PAYRAM_AGENT_BOT_BIN= \
 	$(GO) run ./cmd/agent
 
 .PHONY: precommit

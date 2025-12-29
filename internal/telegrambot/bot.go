@@ -65,11 +65,7 @@ func Run(ctx context.Context, cfg Config) error {
 
 	allowed := make(map[string]struct{})
 	for _, id := range cfg.AllowedChats {
-		id = strings.TrimSpace(id)
-		if id == "" {
-			continue
-		}
-		allowed[id] = struct{}{}
+		addAllowedEntry(allowed, id)
 	}
 
 	b := &bot{
@@ -97,16 +93,16 @@ func Run(ctx context.Context, cfg Config) error {
 	}
 
 	b.log.WithFields(logrus.Fields{
-		"mode":           mode,
-		"chat_api":       b.chatAPI,
-		"chat_api_path":  b.chatAPIPath,
-		"webhook_base":   b.webhookBase,
-		"allowed_chats":  len(allowed),
-		"poll_timeout_s": int(pollTimeout.Seconds()),
-		"reload_secs":    int(reloadEvery.Seconds()),
-		"listen":         webhookListen,
-		"use_html":       b.useHTML,
-		"use_markdown":   b.useMarkdown,
+		"mode":            mode,
+		"chat_api":        b.chatAPI,
+		"chat_api_path":   b.chatAPIPath,
+		"webhook_base":    b.webhookBase,
+		"allowed_entries": len(cfg.AllowedChats),
+		"poll_timeout_s":  int(pollTimeout.Seconds()),
+		"reload_secs":     int(reloadEvery.Seconds()),
+		"listen":          webhookListen,
+		"use_html":        b.useHTML,
+		"use_markdown":    b.useMarkdown,
 	}).Info("telegram bot starting")
 
 	if mode == "webhook" {
@@ -316,10 +312,33 @@ func (b *bot) handleUpdate(ctx context.Context, up Update) {
 		return
 	}
 
-	if !b.isAllowed(chatIDStr) {
+	username := strings.TrimSpace(msg.Chat.Username)
+	if !b.isAllowed(chatIDStr, username) {
 		entry.Warn("chat not allowed")
-		msg := fmt.Sprintf("*Access denied*\nAdd this chat\\_id to the allowlist: `%s`\nOn the host, run:\n`./setup_payram_agent.sh --add-telegram-chat-ids \"%s\"`\nThen retry your message\\.", escapeMarkdownV2(chatIDStr), escapeMarkdownV2(chatIDStr))
-		if err := b.sendMessageMarkdown(ctx, chatID, msg); err != nil {
+		uname := strings.TrimPrefix(username, "@")
+		normalizedUsername := strings.TrimSpace(uname)
+		if normalizedUsername != "" {
+			normalizedUsername = "@" + normalizedUsername
+		}
+
+		var notAllowed string
+		if normalizedUsername != "" {
+			notAllowed = fmt.Sprintf(
+				"<b>Access denied</b>\n\n"+
+					"Add this username to the allowlist: <code>%s</code>\n\n"+
+					"On the host, run:\n"+
+					"<code>./setup_payram_agent.sh --add-telegram-usernames \"%s\"</code>\n\n"+
+					"Then retry your message.",
+				normalizedUsername, normalizedUsername)
+		} else {
+			notAllowed = "<b>Access denied</b>\n\n" +
+				"This bot only allows specific Telegram usernames.\n\n" +
+				"Set a Telegram username in your Telegram settings.\n\n" +
+				"Then run:\n" +
+				"<code>./setup_payram_agent.sh --add-telegram-usernames \"@your_username\"</code>\n\n" +
+				"and retry your message."
+		}
+		if err := b.sendMessageHTML(ctx, chatID, notAllowed); err != nil {
 			entry.WithError(err).Warn("failed to send not-allowed notice")
 		}
 		return
@@ -327,9 +346,20 @@ func (b *bot) handleUpdate(ctx context.Context, up Update) {
 
 	entry.Info("processing message")
 
-	start := time.Now()
-	reply, err := b.callChatAPI(ctx, msg.Text)
-	dur := time.Since(start).Round(time.Millisecond)
+	// Handle simple greetings with consistent responses
+	lowerText := strings.ToLower(strings.TrimSpace(msg.Text))
+	var reply string
+	var err error
+	var dur time.Duration
+
+	switch lowerText {
+	case "hi", "hello", "hey", "hi!", "hello!", "hey!":
+		reply = "<b>Hi there!</b> 👋\n\nI'm your PayRam analytics assistant.\nWhat would you like to know?"
+	default:
+		start := time.Now()
+		reply, err = b.callChatAPI(ctx, msg.Text)
+		dur = time.Since(start).Round(time.Millisecond)
+	}
 
 	if err != nil {
 		entry.WithFields(logrus.Fields{"dur": dur}).WithError(err).Error("chat api failed")
@@ -515,25 +545,57 @@ func (b *bot) refreshAllowed() {
 	}
 	newSet := make(map[string]struct{})
 	for _, id := range ids {
-		id = strings.TrimSpace(id)
-		if id == "" {
-			continue
-		}
-		newSet[id] = struct{}{}
+		addAllowedEntry(newSet, id)
 	}
 
 	b.mu.Lock()
 	prev := len(b.allowed)
 	b.allowed = newSet
 	b.mu.Unlock()
-	b.log.WithFields(logrus.Fields{"allowed_chats": len(newSet), "prev": prev}).Info("reloaded allowed chats")
+	b.log.WithFields(logrus.Fields{"allowed_chats": len(ids), "prev": prev}).Info("reloaded allowed chats")
 }
 
-func (b *bot) isAllowed(chatID string) bool {
+func (b *bot) isAllowed(chatID, username string) bool {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 	_, ok := b.allowed[chatID]
-	return ok
+	if ok {
+		return true
+	}
+	u := strings.TrimSpace(username)
+	if u == "" {
+		return false
+	}
+	u = strings.TrimPrefix(u, "@")
+	uLower := strings.ToLower(u)
+	if _, ok := b.allowed[u]; ok {
+		return true
+	}
+	if _, ok := b.allowed[uLower]; ok {
+		return true
+	}
+	if _, ok := b.allowed["@"+uLower]; ok {
+		return true
+	}
+	return false
+}
+
+// addAllowedEntry normalizes and stores chat IDs or usernames (with/without @, case-insensitive).
+func addAllowedEntry(set map[string]struct{}, v string) {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return
+	}
+	// strip common prefixes (e.g., https://t.me/username)
+	v = strings.TrimPrefix(v, "https://t.me/")
+	v = strings.TrimPrefix(v, "http://t.me/")
+	v = strings.TrimPrefix(v, "t.me/")
+	base := strings.TrimPrefix(v, "@")
+	lower := strings.ToLower(base)
+	set[v] = struct{}{}
+	set[base] = struct{}{}
+	set[lower] = struct{}{}
+	set["@"+lower] = struct{}{}
 }
 
 func reloadTickerTick(t *time.Ticker) <-chan time.Time {

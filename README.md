@@ -36,8 +36,12 @@ curl -X POST -H "Content-Type: application/json" \
 ```
 Health check: `curl http://localhost:3333/health`
 
-## Available tool
+## Available tools
 - `payram_intro`: Returns a plain-text overview of PayRam and useful links.
+- `payram_projects_list`: Lists external platform projects (id + name) to help select a project.
+- `payram_payment_summary`: Gets payment counts (total/closed/open/cancelled) for all projects or a specific project via `project_id`.
+- `payram_payment_search`: Searches payments across all projects or a specific project with filters (query, status, currency, network, date range, sort, limit/offset).
+- `payram_payment_link`: Creates a payment link for a project (auto-selects the only project when just one exists; otherwise requires `project_id`). Requires `customer_id`, `customer_email`, and `amount_usd`.
 - `payram_analytics`: Calls PayRam analytics APIs. Actions:
 	- `list_groups`: GET analytics groups (requires `PAYRAM_ANALYTICS_TOKEN`; `PAYRAM_ANALYTICS_BASE_URL` or `base_url` argument must be set).
 	- `graph_data`: POST group/graph data. Args: `group_id` (int), `graph_id` (int), `payload` (object, optional; defaults to `{ "analytics_date_filter": "last_30_days" }`).

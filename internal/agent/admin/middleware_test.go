@@ -145,8 +145,8 @@ func TestMiddlewareBlocksIP(t *testing.T) {
 
 	handler.ServeHTTP(rr, req)
 
-	if rr.Code != http.StatusInternalServerError {
-		t.Fatalf("expected status %d, got %d", http.StatusInternalServerError, rr.Code)
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("expected status %d, got %d", http.StatusUnauthorized, rr.Code)
 	}
 
 	body := decodeBody(t, rr)
