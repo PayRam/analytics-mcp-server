@@ -1,21 +1,21 @@
 {
   "name": "payram-analytics",
   "channel": "stable",
-  "version": "0.0.2",
-  "released_at": "2025-12-23T07:12:00Z",
-  "notes": "Release v0.0.2",
+  "version": "1.0.1",
+  "released_at": "2025-12-29T07:37:49Z",
+  "notes": "Release v1.0.1",
   "artifacts": {
     "chat": {
-      "url": "https://github.com/PayRam/analytics-mcp-server/releases/download/v0.0.2/chat.bin",
-      "sha256": "5e87fb3b366d3045277ad7ef805066a12222cf45ebb937e5cd72218794a2c934"
+      "url": "https://github.com/PayRam/analytics-mcp-server/releases/download/v1.0.1/chat.bin",
+      "sha256": "37c22c002db677af03cfd7db0588ecd8501165d5c939315050810b31fb081b1c"
     },
     "mcp": {
-      "url": "https://github.com/PayRam/analytics-mcp-server/releases/download/v0.0.2/mcp.bin",
-      "sha256": "e7166939df7cb7844bd18ef5731517dad266b843563023ad72244472e37b9ada"
+      "url": "https://github.com/PayRam/analytics-mcp-server/releases/download/v1.0.1/mcp.bin",
+      "sha256": "5ac8864e0778f0b31b8e9c08336824bd540c99dcb6506ffbda5ecf892080904e"
     },
     "bot": {
-      "url": "https://github.com/PayRam/analytics-mcp-server/releases/download/v0.0.2/telegram-bot.bin",
-      "sha256": "d2ab46dfde6e673441f8b0e7be8bc04e6042c5343da471d3a1f9314c00675519"
+      "url": "https://github.com/PayRam/analytics-mcp-server/releases/download/v1.0.1/telegram-bot.bin",
+      "sha256": "fa18ddb5b0a8f64d4f32687c49d7cf38ded568a890debef10a244a9840d45eb9"
     }
   },
   "compatibility": {
