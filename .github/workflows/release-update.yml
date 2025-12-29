@@ -36,14 +36,17 @@ jobs:
         run: |
           GOOS=linux GOARCH=amd64 go build -o chat.bin ./cmd/chat-api
           GOOS=linux GOARCH=amd64 go build -o mcp.bin ./cmd/mcp-server
+          GOOS=linux GOARCH=amd64 go build -o telegram-bot.bin ./cmd/telegram-bot
 
       - name: Compute sha256 sums
         id: shas
         run: |
           CHAT_SHA=$(sha256sum chat.bin | awk '{print $1}')
           MCP_SHA=$(sha256sum mcp.bin | awk '{print $1}')
+          BOT_SHA=$(sha256sum telegram-bot.bin | awk '{print $1}')
           echo "chat_sha=$CHAT_SHA" >> "$GITHUB_OUTPUT"
           echo "mcp_sha=$MCP_SHA" >> "$GITHUB_OUTPUT"
+          echo "bot_sha=$BOT_SHA" >> "$GITHUB_OUTPUT"
 
       - name: Determine channel and version
         id: meta
@@ -80,6 +83,8 @@ jobs:
             -chat_sha "${{ steps.shas.outputs.chat_sha }}" \
             -mcp_url "https://github.com/PayRam/analytics-mcp-server/releases/download/${{ steps.meta.outputs.tag }}/mcp.bin" \
             -mcp_sha "${{ steps.shas.outputs.mcp_sha }}" \
+            -bot_url "https://github.com/PayRam/analytics-mcp-server/releases/download/${{ steps.meta.outputs.tag }}/telegram-bot.bin" \
+            -bot_sha "${{ steps.shas.outputs.bot_sha }}" \
             -output_dir "$OUT_DIR"
 
       - name: Create or update GitHub release
@@ -92,6 +97,7 @@ jobs:
           files: |
             chat.bin
             mcp.bin
+            telegram-bot.bin
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

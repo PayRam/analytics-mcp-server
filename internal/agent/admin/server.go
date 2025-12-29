@@ -464,6 +464,16 @@ func updateApplyHandler(sup Supervisor) http.HandlerFunc {
 			return
 		}
 
+		if manifest.Artifacts.Bot != nil && strings.TrimSpace(manifest.Artifacts.Bot.URL) != "" {
+			botPath := filepath.Join(stageDir, "payram-analytics-telegram-bot")
+			if err := download(manifest.Artifacts.Bot.URL, botPath, manifest.Artifacts.Bot.SHA256); err != nil {
+				status.MarkFailure("UPDATE_DOWNLOAD_FAILED", err.Error())
+				_ = update.SaveStatus(status)
+				RespondError(w, http.StatusInternalServerError, "UPDATE_DOWNLOAD_FAILED", err.Error())
+				return
+			}
+		}
+
 		_ = os.RemoveAll(releaseDir)
 		if err := os.Rename(stageDir, releaseDir); err != nil {
 			status.MarkFailure("FINALIZE_FAILED", err.Error())

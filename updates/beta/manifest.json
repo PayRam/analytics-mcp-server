@@ -6,7 +6,8 @@
   "notes": "bootstrap",
   "artifacts": {
     "chat": {"url": "", "sha256": ""},
-    "mcp": {"url": "", "sha256": ""}
+    "mcp": {"url": "", "sha256": ""},
+    "bot": {"url": "", "sha256": ""}
   },
   "compatibility": {"payram_core": {"min": "", "max": ""}},
   "revoked": false

@@ -12,6 +12,10 @@
     "mcp": {
       "url": "https://github.com/PayRam/analytics-mcp-server/releases/download/v0.0.2/mcp.bin",
       "sha256": "e7166939df7cb7844bd18ef5731517dad266b843563023ad72244472e37b9ada"
+    },
+    "bot": {
+      "url": "https://github.com/PayRam/analytics-mcp-server/releases/download/v0.0.2/telegram-bot.bin",
+      "sha256": "d2ab46dfde6e673441f8b0e7be8bc04e6042c5343da471d3a1f9314c00675519"
     }
   },
   "compatibility": {

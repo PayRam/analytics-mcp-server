@@ -26,6 +26,8 @@ type Options struct {
 	ChatSHA    string
 	MCPURL     string
 	MCPSHA     string
+	BotURL     string
+	BotSHA     string
 	CoreMin    string
 	CoreMax    string
 	OutputDir  string
@@ -62,6 +64,8 @@ func parseFlags() (*Options, error) {
 		chatSHA    = flag.String("chat_sha", "", "chat artifact sha256 (hex)")
 		mcpURL     = flag.String("mcp_url", "", "mcp artifact URL")
 		mcpSHA     = flag.String("mcp_sha", "", "mcp artifact sha256 (hex)")
+		botURL     = flag.String("bot_url", "", "bot artifact URL (optional)")
+		botSHA     = flag.String("bot_sha", "", "bot artifact sha256 (hex, optional if bot_url empty)")
 		coreMin    = flag.String("core_min", "", "payram-core minimum version")
 		coreMax    = flag.String("core_max", "", "payram-core maximum version")
 		name       = flag.String("name", "payram-analytics", "manifest name")
@@ -108,6 +112,8 @@ func parseFlags() (*Options, error) {
 		ChatSHA:    strings.ToLower(*chatSHA),
 		MCPURL:     *mcpURL,
 		MCPSHA:     strings.ToLower(*mcpSHA),
+		BotURL:     *botURL,
+		BotSHA:     strings.ToLower(*botSHA),
 		CoreMin:    *coreMin,
 		CoreMax:    *coreMax,
 		OutputDir:  *outDir,
@@ -145,6 +151,10 @@ func Generate(opts Options) ([]byte, []byte, string, error) {
 		},
 		Compatibility: update.Compatibility{PayramCore: update.Range{Min: opts.CoreMin, Max: opts.CoreMax}},
 		Revoked:       false,
+	}
+
+	if strings.TrimSpace(opts.BotURL) != "" {
+		manifest.Artifacts.Bot = &update.Artifact{URL: opts.BotURL, SHA256: opts.BotSHA}
 	}
 
 	raw, err := json.MarshalIndent(manifest, "", "  ")
