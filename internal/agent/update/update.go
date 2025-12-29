@@ -32,8 +32,9 @@ type Manifest struct {
 
 // Artifacts contains binaries for each component.
 type Artifacts struct {
-	Chat Artifact `json:"chat"`
-	MCP  Artifact `json:"mcp"`
+	Chat Artifact  `json:"chat"`
+	MCP  Artifact  `json:"mcp"`
+	Bot  *Artifact `json:"bot,omitempty"`
 }
 
 // Artifact describes a downloadable binary.

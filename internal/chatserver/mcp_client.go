@@ -19,6 +19,7 @@ type MCPClient struct {
 	baseURL    string
 	httpClient *http.Client
 	counter    uint64
+	auth       func(ctx context.Context) (string, error)
 }
 
 // NewMCPClient builds a client with a sane timeout.
@@ -59,6 +60,16 @@ func (c *MCPClient) do(ctx context.Context, method string, params any) (protocol
 		return resp, fmt.Errorf("build http request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
+	if c.auth != nil {
+		tok, err := c.auth(ctx)
+		if err != nil {
+			return resp, fmt.Errorf("auth token: %w", err)
+		}
+		tok = strings.TrimSpace(tok)
+		if tok != "" {
+			httpReq.Header.Set("Authorization", "Bearer "+tok)
+		}
+	}
 
 	httpResp, err := c.httpClient.Do(httpReq)
 	if err != nil {
@@ -79,6 +90,11 @@ func (c *MCPClient) do(ctx context.Context, method string, params any) (protocol
 	}
 
 	return resp, nil
+}
+
+// SetAuthProvider allows attaching a bearer token for MCP calls.
+func (c *MCPClient) SetAuthProvider(fn func(ctx context.Context) (string, error)) {
+	c.auth = fn
 }
 
 // ListTools fetches the advertised tools from the MCP server.

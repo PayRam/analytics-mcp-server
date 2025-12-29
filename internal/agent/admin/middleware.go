@@ -34,7 +34,7 @@ func (m *adminMiddleware) wrap(next http.Handler) http.Handler {
 		}
 
 		if m.token == "" {
-			RespondError(w, http.StatusInternalServerError, "ADMIN_TOKEN_MISSING", "admin token not configured")
+			RespondError(w, http.StatusUnauthorized, "ADMIN_TOKEN_MISSING", "admin token not configured")
 			return
 		}
 

@@ -27,6 +27,8 @@ type Config struct {
 	ChatArgs         []string
 	MCPPath          string
 	MCPArgs          []string
+	BotPath          string
+	BotArgs          []string
 	BufferLines      int
 	InitialBackoff   time.Duration
 	MaxBackoff       time.Duration
@@ -58,16 +60,23 @@ type Status struct {
 type Supervisor struct {
 	chat *child
 	mcp  *child
+	bot  *child
 
 	wg sync.WaitGroup
 }
 
 var forwardChildLogs = isForwardChildLogsEnabled()
 
+func (s *Supervisor) children() []*child {
+	return []*child{s.chat, s.mcp, s.bot}
+}
+
 // NewFromEnv builds a Supervisor using environment overrides for binaries.
 func NewFromEnv() (*Supervisor, error) {
 	chatPath := getenvDefault("PAYRAM_AGENT_CHAT_BIN", update.DefaultChatBin())
 	mcpPath := getenvDefault("PAYRAM_AGENT_MCP_BIN", update.DefaultMCPBin())
+	botPath := getenvDefault("PAYRAM_AGENT_BOT_BIN", update.DefaultBotBin())
+	botEnabled := isTruthy(os.Getenv("TELEGRAM_ENABLED")) || isTruthy(os.Getenv("TELEGRAM_BOT_ENABLED"))
 
 	if chatPath == update.DefaultChatBin() {
 		if _, err := os.Stat(chatPath); err != nil {
@@ -79,10 +88,16 @@ func NewFromEnv() (*Supervisor, error) {
 			return nil, fmt.Errorf("mcp binary not found at %s", mcpPath)
 		}
 	}
+	if botEnabled && botPath == update.DefaultBotBin() {
+		if _, err := os.Stat(botPath); err != nil {
+			return nil, fmt.Errorf("bot binary not found at %s", botPath)
+		}
+	}
 
 	cfg := Config{
 		ChatPath:         chatPath,
 		MCPPath:          mcpPath,
+		BotPath:          chooseBotPath(botEnabled, botPath),
 		BufferLines:      200,
 		InitialBackoff:   time.Second,
 		MaxBackoff:       30 * time.Second,
@@ -98,6 +113,9 @@ func New(cfg Config) *Supervisor {
 	}
 	if cfg.MCPPath == "" {
 		cfg.MCPPath = update.DefaultMCPBin()
+	}
+	if cfg.BotPath == "" {
+		cfg.BotPath = ""
 	}
 	if cfg.BufferLines <= 0 {
 		cfg.BufferLines = 200
@@ -115,6 +133,7 @@ func New(cfg Config) *Supervisor {
 	return &Supervisor{
 		chat: newChild("chat", cfg.ChatPath, cfg.ChatArgs, cfg),
 		mcp:  newChild("mcp", cfg.MCPPath, cfg.MCPArgs, cfg),
+		bot:  maybeNewChild("bot", cfg.BotPath, cfg.BotArgs, cfg),
 	}
 }
 
@@ -124,22 +143,33 @@ func (s *Supervisor) Start(ctx context.Context) error {
 		return errors.New("context is nil")
 	}
 
-	s.wg.Add(2)
-	go s.chat.run(ctx, &s.wg)
-	go s.mcp.run(ctx, &s.wg)
+	for _, c := range s.children() {
+		if c == nil {
+			continue
+		}
+		s.wg.Add(1)
+		go c.run(ctx, &s.wg)
+	}
 	return nil
 }
 
 // RestartAll forces both children to restart.
 func (s *Supervisor) RestartAll() error {
-	s.chat.triggerRestart()
-	s.mcp.triggerRestart()
+	for _, c := range s.children() {
+		if c != nil {
+			c.triggerRestart()
+		}
+	}
 	return nil
 }
 
 // Status returns aggregate child status.
 func (s *Supervisor) Status() Status {
-	return Status{Components: []ComponentStatus{s.chat.status(), s.mcp.status()}}
+	statuses := []ComponentStatus{s.chat.status(), s.mcp.status()}
+	if s.bot != nil {
+		statuses = append(statuses, s.bot.status())
+	}
+	return Status{Components: statuses}
 }
 
 // Logs returns recent log lines for a component, or nil if component is unknown.
@@ -149,6 +179,11 @@ func (s *Supervisor) Logs(component string, tail int) []string {
 		return s.chat.logs(tail)
 	case "mcp":
 		return s.mcp.logs(tail)
+	case "bot":
+		if s.bot == nil {
+			return nil
+		}
+		return s.bot.logs(tail)
 	default:
 		return nil
 	}
@@ -354,6 +389,25 @@ func (c *child) pipeOutput(r io.ReadCloser, stream string) {
 
 func isForwardChildLogsEnabled() bool {
 	v := strings.TrimSpace(strings.ToLower(os.Getenv("PAYRAM_AGENT_FORWARD_CHILD_LOGS")))
+	return v == "1" || v == "true" || v == "yes" || v == "on"
+}
+
+func maybeNewChild(name, path string, args []string, cfg Config) *child {
+	if strings.TrimSpace(path) == "" {
+		return nil
+	}
+	return newChild(name, path, args, cfg)
+}
+
+func chooseBotPath(enabled bool, path string) string {
+	if !enabled {
+		return ""
+	}
+	return path
+}
+
+func isTruthy(v string) bool {
+	v = strings.TrimSpace(strings.ToLower(v))
 	return v == "1" || v == "true" || v == "yes" || v == "on"
 }
 

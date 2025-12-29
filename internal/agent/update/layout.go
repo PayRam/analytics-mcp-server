@@ -15,6 +15,7 @@ const defaultHomeDir = "/var/lib/payram-mcp"
 const (
 	chatBinaryName = "payram-analytics-chat"
 	mcpBinaryName  = "payram-analytics-mcp"
+	botBinaryName  = "payram-analytics-telegram-bot"
 )
 
 // HomeDir resolves the agent home directory from PAYRAM_AGENT_HOME or default.
@@ -134,6 +135,11 @@ func DefaultMCPBin() string {
 	return filepath.Join(CurrentSymlink(), mcpBinaryName)
 }
 
+// DefaultBotBin returns the default Telegram bot binary path inside the current release.
+func DefaultBotBin() string {
+	return filepath.Join(CurrentSymlink(), botBinaryName)
+}
+
 // EnsureCompatSymlinks creates compatibility symlinks (chat, mcp) pointing to the canonical binaries.
 func EnsureCompatSymlinks(releaseDir string) error {
 	links := []struct {
@@ -142,11 +148,16 @@ func EnsureCompatSymlinks(releaseDir string) error {
 	}{
 		{name: "chat", target: chatBinaryName},
 		{name: "mcp", target: mcpBinaryName},
+		{name: "bot", target: botBinaryName},
 	}
 
 	for _, l := range links {
 		targetPath := filepath.Join(releaseDir, l.target)
 		if _, err := os.Stat(targetPath); err != nil {
+			// bot is optional; skip missing target
+			if l.name == "bot" {
+				continue
+			}
 			return fmt.Errorf("compat target missing %s: %w", targetPath, err)
 		}
 		linkPath := filepath.Join(releaseDir, l.name)
@@ -190,12 +201,21 @@ func EnsureSeedRelease(ctx context.Context, home string) (bool, string, error) {
 
 	chatDst := filepath.Join(releaseDir, chatBinaryName)
 	mcpDst := filepath.Join(releaseDir, mcpBinaryName)
+	botDst := filepath.Join(releaseDir, botBinaryName)
 
 	if err := copyFileWithMode(chatSrc, chatDst, 0o755); err != nil {
 		return false, "", fmt.Errorf("seed chat copy: %w", err)
 	}
 	if err := copyFileWithMode(mcpSrc, mcpDst, 0o755); err != nil {
 		return false, "", fmt.Errorf("seed mcp copy: %w", err)
+	}
+
+	botSrc := os.Getenv("PAYRAM_AGENT_SEED_BOT_SRC")
+	if botSrc == "" {
+		botSrc = "/app/telegram-bot"
+	}
+	if err := copyOptionalFile(botSrc, botDst, 0o755); err != nil {
+		return false, "", fmt.Errorf("seed bot copy: %w", err)
 	}
 	if err := EnsureCompatSymlinks(releaseDir); err != nil {
 		return false, "", err
@@ -260,4 +280,15 @@ func copyFileWithMode(src, dst string, mode os.FileMode) error {
 	}
 
 	return nil
+}
+
+// copyOptionalFile copies src to dst if src exists; missing src is not an error.
+func copyOptionalFile(src, dst string, mode os.FileMode) error {
+	if _, err := os.Stat(src); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	return copyFileWithMode(src, dst, mode)
 }
