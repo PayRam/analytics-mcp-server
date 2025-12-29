@@ -19,6 +19,8 @@ func NewToolbox() *mcp.Toolbox {
 
 		// Summary and metrics tools
 		tools.PayramPaymentsSummary(),
+		tools.PayramPaymentSearch(),
+		tools.PayramPaymentLink(),
 		tools.PayramNumbersSummary(),
 		tools.PayramTransactionCounts(),
 		tools.PayramDailyStats(),
@@ -33,6 +35,8 @@ func NewToolbox() *mcp.Toolbox {
 		tools.PayramRecentTransactions(),
 
 		// Project-level analytics
+		tools.PayramProjectsList(),
+		tools.PayramPaymentSummary(),
 		tools.PayramProjectsSummary(),
 
 		// Comparison and analysis tools

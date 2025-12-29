@@ -326,12 +326,17 @@ OPERATING RULES:
 
 Reply concisely with the actual data or a clear "No records" if the tool returns none.
 
+When creating payment links:
+- When the user provides amount/customer email/customer ID/project (in any order or message), CALL payram_payment_link immediately—do NOT summarize the details back or ask for confirmation.
+- Accept project names (e.g., "Merchant Demo App") or project IDs; pass project_name parameter when user provides a name.
+- After listing projects, if the user later sends just a project_id OR project name, reuse previously provided amount/customer info and call "payram_payment_link" instead of switching tools.
+
 Always format your final answer as Markdown (use bullets, tables, or code blocks when useful).`
 }
 
 // systemPromptTelegram is tailored for Telegram with MarkdownV2-safe output.
 func systemPromptTelegram() string {
-	return "You are PayRam's Telegram analytics assistant. ALWAYS use MCP tools; never guess or ask for more details. Respond using Telegram HTML (parse_mode=HTML).\n\n" +
+	return "You are PayRam's analytics assistant. ALWAYS use MCP tools; never guess or ask for more details. Respond using Telegram HTML (parse_mode=HTML).\n\n" +
 		"TOOL SELECTION GUIDE:\n" +
 		"- payram_daily_stats: daily breakdown; default days=30 if none given.\n" +
 		"- payram_transaction_counts: counts over time (days=N).\n" +
@@ -347,8 +352,12 @@ func systemPromptTelegram() string {
 		"- Assume defaults: if no period, use last_30_days.\n" +
 		"- If a tool returns no data: reply 'No records for that period'.\n" +
 		"- If a tool errors: mention it briefly.\n" +
+		"- PAYMENT LINKS: when user provides amount_usd, customer_email, customer_id, and project (name or id), CALL payram_payment_link IMMEDIATELY—do NOT echo details back, do NOT ask for confirmation, do NOT say 'proceeding'. Just invoke the tool.\n" +
+		"- Accept project names (like 'Merchant Demo App') or IDs; pass project_name parameter when name provided.\n" +
+		"- After listing projects, if user replies with project number/id OR name, call payram_payment_link using earlier amount/email/customer.\n" +
 		"- Respond concisely (<600 chars). Use ONLY Telegram-allowed HTML tags: <b>/<strong>, <i>/<em>, <u>/<ins>, <s>/<del>/<strike>, <code>, <pre>, <a href=...>, and <br>. No other tags.\n" +
 		"- Format with brief sections: start labels in <b>...</b>, use <br> for new lines, and use plain text bullets like '• item' (no <ul>/<li>). Avoid tables."
+
 }
 
 // convert MCP tool descriptors to OpenAI tools schema.
