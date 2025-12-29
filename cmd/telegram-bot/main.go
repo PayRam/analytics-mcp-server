@@ -63,12 +63,14 @@ func loadConfig(logger *logrus.Entry) telegrambot.Config {
 	webhookListen := envOr("TELEGRAM_WEBHOOK_LISTEN", ":8788")
 	useMarkdown := strings.ToLower(strings.TrimSpace(envOr("TELEGRAM_BOT_MARKDOWN", "false"))) == "true"
 	useHTML := strings.ToLower(strings.TrimSpace(envOr("TELEGRAM_BOT_HTML", "true"))) != "false"
+	botUsername := envOr("TELEGRAM_BOT_USERNAME", "")
 
 	return telegrambot.Config{
 		Token:          token,
 		WebhookBase:    webhookBase,
 		WebhookListen:  webhookListen,
 		AllowedChats:   allowed,
+		BotUsername:    botUsername,
 		ChatAPIURL:     chatAPI,
 		ChatAPIPath:    chatPath,
 		Model:          model,

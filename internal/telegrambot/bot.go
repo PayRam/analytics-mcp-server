@@ -23,6 +23,7 @@ type Config struct {
 	WebhookBase    string
 	WebhookListen  string
 	AllowedChats   []string
+	BotUsername    string
 	ChatAPIURL     string
 	ChatAPIPath    string
 	Model          string
@@ -63,6 +64,17 @@ func Run(ctx context.Context, cfg Config) error {
 		webhookListen = ":8788"
 	}
 
+	resolvedBotUsername := strings.TrimSpace(strings.TrimPrefix(cfg.BotUsername, "@"))
+	if resolvedBotUsername == "" {
+		if uname, err := fetchBotUsername(ctx, cfg.Token); err != nil {
+			cfg.Logger.WithError(err).Warn("could not resolve bot username via getMe; set TELEGRAM_BOT_USERNAME to enable group mentions")
+		} else if strings.TrimSpace(uname) != "" {
+			resolvedBotUsername = strings.TrimPrefix(strings.TrimSpace(uname), "@")
+			cfg.Logger.WithField("bot_username", resolvedBotUsername).Info("resolved bot username via getMe")
+		}
+	}
+	cfg.BotUsername = resolvedBotUsername
+
 	allowed := make(map[string]struct{})
 	for _, id := range cfg.AllowedChats {
 		addAllowedEntry(allowed, id)
@@ -73,6 +85,8 @@ func Run(ctx context.Context, cfg Config) error {
 		baseAPI:       fmt.Sprintf("https://api.telegram.org/bot%s", cfg.Token),
 		webhookBase:   strings.TrimRight(cfg.WebhookBase, "/"),
 		allowed:       allowed,
+		botUsername:   strings.TrimSpace(strings.TrimPrefix(cfg.BotUsername, "@")),
+		botUsernameLC: strings.ToLower(strings.TrimSpace(strings.TrimPrefix(cfg.BotUsername, "@"))),
 		chatAPI:       strings.TrimRight(cfg.ChatAPIURL, "/"),
 		chatAPIPath:   cfg.ChatAPIPath,
 		model:         cfg.Model,
@@ -101,6 +115,7 @@ func Run(ctx context.Context, cfg Config) error {
 		"poll_timeout_s":  int(pollTimeout.Seconds()),
 		"reload_secs":     int(reloadEvery.Seconds()),
 		"listen":          webhookListen,
+		"bot_username":    b.botUsername,
 		"use_html":        b.useHTML,
 		"use_markdown":    b.useMarkdown,
 	}).Info("telegram bot starting")
@@ -116,6 +131,8 @@ type bot struct {
 	baseAPI       string
 	webhookBase   string
 	allowed       map[string]struct{}
+	botUsername   string
+	botUsernameLC string
 	chatAPI       string
 	chatAPIPath   string
 	model         string
@@ -247,10 +264,13 @@ type Update struct {
 }
 
 type Message struct {
-	MessageID int64  `json:"message_id"`
-	Text      string `json:"text"`
-	Chat      Chat   `json:"chat"`
-	Date      int64  `json:"date"`
+	MessageID int64           `json:"message_id"`
+	Text      string          `json:"text"`
+	Chat      Chat            `json:"chat"`
+	From      *User           `json:"from"`
+	Entities  []MessageEntity `json:"entities"`
+	ReplyTo   *Message        `json:"reply_to_message"`
+	Date      int64           `json:"date"`
 }
 
 type Chat struct {
@@ -258,6 +278,18 @@ type Chat struct {
 	Type     string `json:"type"`
 	Title    string `json:"title"`
 	Username string `json:"username"`
+}
+
+type User struct {
+	ID       int64  `json:"id"`
+	IsBot    bool   `json:"is_bot"`
+	Username string `json:"username"`
+}
+
+type MessageEntity struct {
+	Type   string `json:"type"`
+	Offset int    `json:"offset"`
+	Length int    `json:"length"`
 }
 
 func (b *bot) getUpdates(ctx context.Context, offset int64) ([]Update, error) {
@@ -300,16 +332,25 @@ func (b *bot) handleUpdate(ctx context.Context, up Update) {
 	msg := up.Message
 	chatID := msg.Chat.ID
 	chatIDStr := strconv.FormatInt(chatID, 10)
+	chatType := strings.ToLower(strings.TrimSpace(msg.Chat.Type))
 
 	entry := b.log.WithFields(logrus.Fields{
 		"chat_id":   chatIDStr,
-		"chat_type": msg.Chat.Type,
+		"chat_type": chatType,
 		"msg_id":    msg.MessageID,
 	})
 
 	if strings.TrimSpace(msg.Text) == "" {
 		entry.Debug("skip non-text message")
 		return
+	}
+
+	// In group chats, only respond when explicitly called (mention/command/reply to bot).
+	if chatType == "group" || chatType == "supergroup" {
+		if !b.shouldHandleGroupMessage(msg) {
+			entry.Debug("skip group message without bot mention/command/reply")
+			return
+		}
 	}
 
 	username := strings.TrimSpace(msg.Chat.Username)
@@ -322,7 +363,16 @@ func (b *bot) handleUpdate(ctx context.Context, up Update) {
 		}
 
 		var notAllowed string
-		if normalizedUsername != "" {
+		if chatType == "group" || chatType == "supergroup" {
+			notAllowed = fmt.Sprintf(
+				"<b>Access denied</b>\n\n"+
+					"This group is not allowlisted.\n"+
+					"Add this chat ID to the allowlist: <code>%s</code>\n\n"+
+					"On the host, run:\n"+
+					"<code>./setup_payram_agent.sh --add-telegram-chat-ids \"%s\"</code>\n\n"+
+					"Then mention %s in this group and retry.",
+				chatIDStr, chatIDStr, b.mentionHandle())
+		} else if normalizedUsername != "" {
 			notAllowed = fmt.Sprintf(
 				"<b>Access denied</b>\n\n"+
 					"Add this username to the allowlist: <code>%s</code>\n\n"+
@@ -603,6 +653,103 @@ func reloadTickerTick(t *time.Ticker) <-chan time.Time {
 		return nil
 	}
 	return t.C
+}
+
+type getMeResponse struct {
+	Ok          bool   `json:"ok"`
+	Description string `json:"description"`
+	Result      struct {
+		Username string `json:"username"`
+		IsBot    bool   `json:"is_bot"`
+	} `json:"result"`
+}
+
+func fetchBotUsername(ctx context.Context, token string) (string, error) {
+	client := &http.Client{Timeout: 10 * time.Second}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("https://api.telegram.org/bot%s/getMe", token), nil)
+	if err != nil {
+		return "", err
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("getMe status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	var body getMeResponse
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return "", err
+	}
+	if !body.Ok {
+		return "", fmt.Errorf("getMe not ok: %s", body.Description)
+	}
+
+	return strings.TrimSpace(body.Result.Username), nil
+}
+
+func (b *bot) shouldHandleGroupMessage(msg *Message) bool {
+	if msg == nil {
+		return false
+	}
+	if b.isBotMentioned(msg) {
+		return true
+	}
+	if b.hasBotCommand(msg) {
+		return true
+	}
+	if msg.ReplyTo != nil && msg.ReplyTo.From != nil && msg.ReplyTo.From.IsBot {
+		if b.botUsernameLC == "" {
+			return true
+		}
+		return strings.EqualFold(strings.TrimPrefix(msg.ReplyTo.From.Username, "@"), b.botUsernameLC)
+	}
+	return false
+}
+
+func (b *bot) isBotMentioned(msg *Message) bool {
+	if b.botUsernameLC == "" {
+		return false
+	}
+	lowerText := strings.ToLower(msg.Text)
+	if strings.Contains(lowerText, "@"+b.botUsernameLC) {
+		return true
+	}
+	for _, ent := range msg.Entities {
+		if ent.Type != "mention" {
+			continue
+		}
+		if ent.Offset < 0 || ent.Length <= 0 || ent.Offset+ent.Length > len(msg.Text) {
+			continue
+		}
+		mention := strings.ToLower(msg.Text[ent.Offset : ent.Offset+ent.Length])
+		if mention == "@"+b.botUsernameLC {
+			return true
+		}
+	}
+	return false
+}
+
+func (b *bot) hasBotCommand(msg *Message) bool {
+	for _, ent := range msg.Entities {
+		if ent.Type == "bot_command" {
+			return true
+		}
+	}
+	text := strings.TrimSpace(msg.Text)
+	return strings.HasPrefix(text, "/")
+}
+
+func (b *bot) mentionHandle() string {
+	if b.botUsername == "" {
+		return "the bot"
+	}
+	return "@" + b.botUsername
 }
 
 func (b *bot) sendMessageMarkdown(ctx context.Context, chatID int64, text string) error {

@@ -134,3 +134,4 @@ Generated `.env` includes defaults for ports (agent `9900`, chat `2358`, MCP `33
 	- `PAYRAM_AGENT_UPDATE_BASE_URL=https://raw.githubusercontent.com/PayRam/analytics-mcp-server/main/updates`
 	- `PAYRAM_AGENT_UPDATE_CHANNEL=stable` (or `beta`)
 	- `PAYRAM_AGENT_UPDATE_PUBKEY_B64=<matching Ed25519 public key>`
+	- Auto-update loop runs when base URL + pubkey are set; it polls `/admin/update/available` locally and applies via `/admin/update/apply` on a fixed 6h interval.
