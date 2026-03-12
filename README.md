@@ -1,9 +1,37 @@
 # PayRam Analytics MCP Server
 
-A Go-based Model Context Protocol (MCP) server with a modular toolbox for tools. Currently exposes one tool that returns an introduction to PayRam.
+A Go-based Model Context Protocol (MCP) server that provides AI assistants with structured access to PayRam's analytics, documentation, and operational data through 20+ specialized tools.
+
+## 📚 Documentation
+
+- **[Complete Tools Documentation](docs/TOOLS_DOCUMENTATION.md)** - Comprehensive guide covering all tools, architecture, examples, and best practices
+- **[Quick Reference Guide](docs/TOOLS_QUICK_REFERENCE.md)** - Cheat sheet for fast tool lookups and common patterns
+- **[API Reference](docs/API_REFERENCE.md)** - Direct tool API docs with expected inputs and outputs
 
 ## Prerequisites
-- Go 1.21+
+- Go 1.22+
+
+## Authentication
+
+The MCP server supports two authentication modes:
+
+### Option A — Static Bearer Token
+```bash
+export PAYRAM_ANALYTICS_TOKEN=your_token_here
+export PAYRAM_ANALYTICS_BASE_URL=https://api.example.com
+```
+
+### Option B — Auto-Login (email + password)
+Set these instead and the server will log in automatically, cache the token, and refresh it only when it expires:
+```bash
+export PAYRAM_ANALYTICS_BASE_URL=https://api.example.com
+export USER_EMAIL=admin@example.com
+export USER_PASSWORD=secret
+# Aliases also accepted:
+# PAYRAM_DASHBOARD_USERNAME / PAYRAM_DASHBOARD_PASSWORD
+```
+
+Token resolution order per call: **per-call `token` arg → auto-login manager → `PAYRAM_ANALYTICS_TOKEN` env**.
 
 ## Run (stdio)
 ```sh
@@ -26,7 +54,7 @@ Send JSON-RPC 2.0 requests over stdin. Example session:
 
 ## Run (HTTP)
 ```sh
-make run-http  # listens on :3333
+make run-mcp  # listens on :3333
 ```
 Call with a single JSON-RPC request per POST:
 ```sh
@@ -36,16 +64,45 @@ curl -X POST -H "Content-Type: application/json" \
 ```
 Health check: `curl http://localhost:3333/health`
 
-## Available tools
-- `payram_intro`: Returns a plain-text overview of PayRam and useful links.
-- `payram_projects_list`: Lists external platform projects (id + name) to help select a project.
-- `payram_payment_summary`: Gets payment counts (total/closed/open/cancelled) for all projects or a specific project via `project_id`.
-- `payram_payment_search`: Searches payments across all projects or a specific project with filters (query, status, currency, network, date range, sort, limit/offset).
-- `payram_payment_link`: Creates a payment link for a project (auto-selects the only project when just one exists; otherwise requires `project_id`). Requires `customer_id`, `customer_email`, and `amount_usd`.
-- `payram_analytics`: Calls PayRam analytics APIs. Actions:
-	- `list_groups`: GET analytics groups (requires `PAYRAM_ANALYTICS_TOKEN`; `PAYRAM_ANALYTICS_BASE_URL` or `base_url` argument must be set).
-	- `graph_data`: POST group/graph data. Args: `group_id` (int), `graph_id` (int), `payload` (object, optional; defaults to `{ "analytics_date_filter": "last_30_days" }`).
-		Example payloads: filters like `group_by_network_currency_filter`, `in_query_currency_filter`, etc., as provided by the API.
+## Available Tools (20+)
+
+The server provides tools organized into seven categories:
+
+### 📖 Information & Discovery (4 tools)
+- **`payram_intro`** - Platform overview and quick start
+- **`payram_docs`** - Search and retrieve documentation (5 actions: search, get_section, list_index, get_doc_by_id, list_docs)
+- **`payram_dashboard_helper`** - Guided dashboard workflows (11 topics)
+- **`payram_discover_analytics`** - Auto-discover available analytics
+
+### 💳 Payment Operations (4 tools)
+- **`payram_payments_summary`** - High-level payment metrics
+- **`payram_payment_summary`** - Payment status counts by project
+- **`payram_payment_search`** - Advanced payment search with filters
+- **`payram_payment_link`** - Create payment links programmatically
+
+### 🔄 Transaction Tracking (2 tools)
+- **`payram_recent_transactions`** - Latest transaction activity
+- **`payram_transaction_counts`** - Volume metrics by status
+
+### 👥 User Analytics (2 tools)
+- **`payram_paying_users`** - Active paying users metrics
+- **`payram_user_growth`** - User acquisition trends
+
+### 💰 Financial Analytics (4 tools)
+- **`payram_currency_breakdown`** - Distribution by cryptocurrency
+- **`payram_deposit_distribution`** - Deposit patterns analysis
+- **`payram_daily_stats`** - Daily aggregated statistics
+- **`payram_numbers_summary`** - Key metrics snapshot
+
+### 📊 Project Management (2 tools)
+- **`payram_projects_list`** - List all projects
+- **`payram_projects_summary`** - Per-project analytics
+
+### 🔬 Advanced Analysis (2 tools)
+- **`payram_compare_periods`** - Period-over-period comparison
+- **`payram_fetch_graph_data`** - Custom graph data with date filtering
+
+> **See [TOOLS_DOCUMENTATION.md](docs/TOOLS_DOCUMENTATION.md) for detailed parameters, examples, and use cases for each tool.**
 
 ## Chat orchestrator (UI)
 Launch a minimal chat UI that routes tool calls through the MCP server (HTTP mode required):
@@ -88,11 +145,44 @@ curl -X POST http://localhost:2358/v1/chat/completions \
 ```
 
 Configuration (.env or env vars):
-- `CHAT_API_KEY` (required for auth)
-- `CHAT_API_BOT_BYPASS_TOKEN` (optional) if set, requests carrying header `X-Telegram-Bot-Token: <token>` bypass bearer auth (intended for the trusted Telegram bot)
-- `OPENAI_API_KEY` (required), `OPENAI_MODEL` (default `gpt-4o-mini`), `OPENAI_BASE_URL` (default `https://api.openai.com/v1`)
-- `MCP_SERVER_URL` (HTTP endpoint for MCP server; default `http://localhost:3333/`)
+- `Environment Configuration
 
+Tools that access PayRam APIs require these environment variables:
+
+```bash
+export PAYRAM_ANALYTICS_TOKEN=your_bearer_token_here
+export PAYRAM_ANALYTICS_BASE_URL=https://api.payram.com
+export PAYRAM_DOCS_ROOT=docs/payram-docs  # Optional: custom docs path
+export PAYRAM_MCP_DEBUG=true              # Optional: enable debug logging
+```
+
+See [Authentication & Configuration](docs/TOOLS_DOCUMENTATION.md#authentication--configuration) for details.
+
+## Architecture
+
+```mermaid
+graph LR
+    Client[AI/CLI Client] -->|JSON-RPC 2.0| Server[MCP Server]
+    Server --> Toolbox[Toolbox Registry]
+    Toolbox --> Tools[20+ Tools]
+    Tools --> API[PayRam API]
+    Tools --> Docs[Local Docs]
+```
+
+**Key Components:**
+- **MCP Server** - Handles JSON-RPC 2.0 requests (`initialize`, `ping`, `tools/list`, `tools/call`)
+- **Toolbox** - Registry and dispatcher for all tools
+- **Tools** - Individual implementations with `Descriptor()` and `Invoke()` methods
+- **Protocol** - MCP request/response structures
+
+See [Architecture Overview](docs/TOOLS_DOCUMENTATION.md#architecture-overview) for detailed flow diagrams.
+
+## Structure
+- `main.go`: wires stdin/stdout loop to the MCP server.
+- `internal/mcp`: server routing, toolbox, and protocol handling.
+- `internal/tools`: individual tool implementations (20+ tools, extensible).
+- `internal/protocol`: shared types for requests/responses.
+- `docs/`: comprehensive documentation and quick reference guid
 ## Agent + Docker setup (with optional Telegram add-on)
 Use the helper script to generate `.env`, seed secrets, and run the containerized agent (supervisor for chat + MCP):
 

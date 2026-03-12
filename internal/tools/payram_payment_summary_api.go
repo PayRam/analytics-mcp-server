@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 
@@ -59,7 +58,7 @@ func (t *payramPaymentSummaryTool) Invoke(ctx context.Context, raw json.RawMessa
 		}
 	}
 
-	token, base, errResp := resolveAnalyticsAuth(args.Token, args.BaseURL)
+	token, base, errResp := resolveAnalyticsAuth(ctx, args.Token, args.BaseURL)
 	if errResp != nil {
 		return protocol.CallResult{}, errResp
 	}
@@ -142,7 +141,7 @@ func (t *payramProjectsListTool) Invoke(ctx context.Context, raw json.RawMessage
 		}
 	}
 
-	token, base, errResp := resolveAnalyticsAuth(args.Token, args.BaseURL)
+	token, base, errResp := resolveAnalyticsAuth(ctx, args.Token, args.BaseURL)
 	if errResp != nil {
 		return protocol.CallResult{}, errResp
 	}
@@ -276,7 +275,7 @@ func (t *payramPaymentSearchTool) Invoke(ctx context.Context, raw json.RawMessag
 		}
 	}
 
-	token, base, errResp := resolveAnalyticsAuth(args.Token, args.BaseURL)
+	token, base, errResp := resolveAnalyticsAuth(ctx, args.Token, args.BaseURL)
 	if errResp != nil {
 		return protocol.CallResult{}, errResp
 	}
@@ -397,23 +396,4 @@ func defaultSlice(v []string) []string {
 	return v
 }
 
-func resolveAnalyticsAuth(tokenArg, baseArg string) (string, string, *protocol.ResponseError) {
-	token := strings.TrimSpace(tokenArg)
-	if token == "" {
-		token = strings.TrimSpace(os.Getenv("PAYRAM_ANALYTICS_TOKEN"))
-	}
 
-	base := strings.TrimSpace(baseArg)
-	if base == "" {
-		base = strings.TrimSpace(os.Getenv("PAYRAM_ANALYTICS_BASE_URL"))
-	}
-	base = strings.TrimSuffix(base, "/")
-
-	if token == "" {
-		return "", "", &protocol.ResponseError{Code: -32000, Message: "Missing token: set PAYRAM_ANALYTICS_TOKEN env or pass token"}
-	}
-	if base == "" {
-		return "", "", &protocol.ResponseError{Code: -32000, Message: "Missing base_url: set PAYRAM_ANALYTICS_BASE_URL env or pass base_url"}
-	}
-	return token, base, nil
-}

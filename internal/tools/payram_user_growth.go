@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 
@@ -76,24 +75,12 @@ func (t *payramUserGrowthTool) Invoke(ctx context.Context, raw json.RawMessage) 
 		}
 	}
 
-	token := strings.TrimSpace(args.Token)
-	if token == "" {
-		token = strings.TrimSpace(os.Getenv("PAYRAM_ANALYTICS_TOKEN"))
-	}
-	if token == "" {
-		return protocol.CallResult{}, &protocol.ResponseError{Code: -32000, Message: "Missing token: set PAYRAM_ANALYTICS_TOKEN env or pass token"}
-	}
-	base := strings.TrimSpace(args.BaseURL)
-	if base == "" {
-		base = strings.TrimSpace(os.Getenv("PAYRAM_ANALYTICS_BASE_URL"))
-	}
-	base = strings.TrimSuffix(base, "/")
-	if base == "" {
-		return protocol.CallResult{}, &protocol.ResponseError{Code: -32000, Message: "Missing base_url: set PAYRAM_ANALYTICS_BASE_URL env or pass base_url"}
+	token, base, errResp := resolveAnalyticsAuth(ctx, args.Token, args.BaseURL)
+	if errResp != nil {
+		return protocol.CallResult{}, errResp
 	}
 
 	var dateFilter, customStart, customEnd string
-	var errResp *protocol.ResponseError
 	if args.Days > 0 {
 		dateFilter = "custom"
 		customStart, customEnd = lastNDaysRange(args.Days)

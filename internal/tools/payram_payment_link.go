@@ -65,7 +65,7 @@ func (t *payramPaymentLinkTool) Invoke(ctx context.Context, raw json.RawMessage)
 		}
 	}
 
-	token, base, errResp := resolveAnalyticsAuth(args.Token, args.BaseURL)
+	token, base, errResp := resolveAnalyticsAuth(ctx, args.Token, args.BaseURL)
 	if errResp != nil {
 		return protocol.CallResult{}, errResp
 	}

@@ -14,6 +14,8 @@ func main() {
 	httpAddr := flag.String("http", ":3333", "MCP HTTP listen address (e.g., :3333)")
 	flag.Parse()
 
+	app.InitMCPAuth()
+
 	log.Printf("mcp-server server listening on %s", *httpAddr)
 	if err := app.RunMCPHTTP(*httpAddr); err != nil {
 		log.Fatalf("MCP server error: %v", err)
