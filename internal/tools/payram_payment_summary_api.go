@@ -395,5 +395,3 @@ func defaultSlice(v []string) []string {
 	}
 	return v
 }
-
-
