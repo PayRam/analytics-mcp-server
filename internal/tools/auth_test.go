@@ -215,10 +215,12 @@ func TestRedirectToAnotherHostDropsToken(t *testing.T) {
 	if got := payram.seen(); len(got) != 1 || got[0] != "Bearer server-token" {
 		t.Fatalf("configured PayRam expected the token once, got %v", got)
 	}
-	for _, auth := range other.seen() {
-		if auth != "" {
-			t.Fatalf("redirect target on another host received Authorization %q", auth)
-		}
+	redirected := other.seen()
+	if len(redirected) != 1 {
+		t.Fatalf("expected the redirect to be followed once, the other host saw %d requests", len(redirected))
+	}
+	if redirected[0] != "" {
+		t.Fatalf("redirect target on another host received Authorization %q", redirected[0])
 	}
 }
 
