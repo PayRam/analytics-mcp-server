@@ -351,6 +351,7 @@ validate_http_url() {
 }
 
 say_header "PayRam Analytics MCP Setup"
+say_warn "This analytics agent is retired: an MCP server built into PayRam is replacing it. See README.md for how to remove an existing install."
 say_info "This wizard writes ${ENV_FILE} and (optionally) ${BOLD}${HOST_AGENT_HOME:-./.agent-home}/state/secrets.json${RESET}."
 say_info "Secrets are not echoed after entry."
 
@@ -416,7 +417,12 @@ TELEGRAM_ALLOWED_USERNAMES="$(cleanup_var "$TELEGRAM_ALLOWED_USERNAMES")"
 
 # --- Constants you requested ---
 
-PAYRAM_AGENT_LISTEN_ADDR=":9900"
+# The agent listens on every interface inside the container, because Docker
+# delivers the published port to the container's own address. The port is
+# published on the host's 127.0.0.1 only (see docker run below), and every
+# /admin call needs PAYRAM_AGENT_ADMIN_TOKEN. Chat and MCP stay on the
+# container's loopback; reach them through the agent at /chat and /mcp.
+PAYRAM_AGENT_LISTEN_ADDR="0.0.0.0:9900"
 PAYRAM_CHAT_PORT="2358"
 PAYRAM_MCP_PORT="3333"
 MCP_SERVER_URL="http://127.0.0.1:3333/"
@@ -440,7 +446,21 @@ if [[ "$AUTO_UPDATE" != "true" ]]; then
   PAYRAM_AGENT_UPDATE_PUBKEY_B64=""
 fi
 
-# Default allowlist + add resolved Payram server IP (if possible)
+# Admin token: required on every /admin request. Keep a strong one already in
+# the env file so re-running the wizard does not lock out scripts that use it.
+PAYRAM_AGENT_ADMIN_TOKEN=""
+if [[ -f "$ENV_FILE" ]]; then
+  PAYRAM_AGENT_ADMIN_TOKEN="$(grep -E '^PAYRAM_AGENT_ADMIN_TOKEN=' "$ENV_FILE" | tail -n 1 | cut -d= -f2- || true)"
+fi
+if [[ ${#PAYRAM_AGENT_ADMIN_TOKEN} -lt 32 ]]; then
+  PAYRAM_AGENT_ADMIN_TOKEN="$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')"
+fi
+if [[ ${#PAYRAM_AGENT_ADMIN_TOKEN} -lt 32 ]]; then
+  say_error "could not create an admin token"
+  exit 1
+fi
+
+# Chat API allowlist + add resolved Payram server IP (if possible)
 BASE_ALLOWLIST="127.0.0.1/32,172.16.0.0/12"
 
 extract_host() {
@@ -463,14 +483,12 @@ if [[ -n "$PAYRAM_HOST" ]]; then
   fi
 fi
 
-PAYRAM_AGENT_ADMIN_ALLOWLIST="$BASE_ALLOWLIST"
+CHAT_API_ALLOWLIST="$BASE_ALLOWLIST"
 if [[ -n "$RESOLVED_IP" ]]; then
-  PAYRAM_AGENT_ADMIN_ALLOWLIST="$PAYRAM_AGENT_ADMIN_ALLOWLIST,$RESOLVED_IP/32"
+  CHAT_API_ALLOWLIST="$CHAT_API_ALLOWLIST,$RESOLVED_IP/32"
 else
   say_warn "Could not resolve PayRam server host '$PAYRAM_HOST' to an IPv4. Keeping default allowlist only."
 fi
-
-CHAT_API_ALLOWLIST="$PAYRAM_AGENT_ADMIN_ALLOWLIST"
 
 # --- Write .env ---
 cat > "$ENV_FILE" <<EOF
@@ -489,7 +507,8 @@ OPENAI_MODEL=$OPENAI_MODEL
 # Agent
 # =====================
 PAYRAM_AGENT_LISTEN_ADDR=$PAYRAM_AGENT_LISTEN_ADDR
-PAYRAM_AGENT_ADMIN_ALLOWLIST=$PAYRAM_AGENT_ADMIN_ALLOWLIST
+# Send as the X-MCP-Key header on every /admin request
+PAYRAM_AGENT_ADMIN_TOKEN=$PAYRAM_AGENT_ADMIN_TOKEN
 PAYRAM_CORE_URL=$PAYRAM_CORE_URL
 
 # Binary paths (for non-update mode; point to /app inside container)
@@ -630,8 +649,6 @@ docker run --rm -d \
   --name payram-analytics-agent \
   --add-host=host.docker.internal:host-gateway \
   -p 127.0.0.1:9900:9900 \
-  -p 127.0.0.1:2358:2358 \
-  -p 127.0.0.1:3333:3333 \
   -v ${HOST_AGENT_HOME}:/var/lib/payram-mcp \
   --env-file ${ENV_FILE} \
   ${RUN_IMAGE}
@@ -657,8 +674,6 @@ start_container() {
     --name payram-analytics-agent \
     --add-host=host.docker.internal:host-gateway \
     -p 127.0.0.1:9900:9900 \
-    -p 127.0.0.1:2358:2358 \
-    -p 127.0.0.1:3333:3333 \
     -v "${HOST_AGENT_HOME}:/var/lib/payram-mcp" \
     --env-file "${ENV_FILE}" \
     "${RUN_IMAGE}"
@@ -705,20 +720,20 @@ else
 fi
 
 echo
-echo "After it starts, test:"
-echo '  curl -s http://127.0.0.1:2358/health'
-echo '  curl -s http://127.0.0.1:3333/health'
-echo '  curl -s http://127.0.0.1:9900/admin/version'
+echo "After it starts, test (the admin token is PAYRAM_AGENT_ADMIN_TOKEN in $ENV_FILE):"
+echo '  curl -s http://127.0.0.1:9900/chat/health'
+echo '  curl -s http://127.0.0.1:9900/mcp/health'
+echo "  curl -s -H \"X-MCP-Key: \$(grep '^PAYRAM_AGENT_ADMIN_TOKEN=' $ENV_FILE | cut -d= -f2-)\" http://127.0.0.1:9900/admin/version"
 if [[ -n "$PAYRAM_AGENT_UPDATE_BASE_URL" ]]; then
-  echo '  curl -s "http://127.0.0.1:9900/admin/update/available?channel=stable"'
+  echo "  curl -s -H \"X-MCP-Key: \$(grep '^PAYRAM_AGENT_ADMIN_TOKEN=' $ENV_FILE | cut -d= -f2-)\" \"http://127.0.0.1:9900/admin/update/available?channel=stable\""
 fi
 
 echo
 echo "${CYAN}Summary${RESET}"
 echo "  PayRam base:     $PAYRAM_ANALYTICS_BASE_URL"
-echo "  Agent API:       http://127.0.0.1:9900"
-echo "  Chat API:        http://127.0.0.1:2358 (model=$OPENAI_MODEL)"
-echo "  MCP Server:      http://127.0.0.1:3333"
+echo "  Agent API:       http://127.0.0.1:9900 (/admin needs the X-MCP-Key header)"
+echo "  Chat API:        http://127.0.0.1:9900/chat (model=$OPENAI_MODEL)"
+echo "  MCP Server:      http://127.0.0.1:9900/mcp"
 if [[ -n "$TELEGRAM_BOT_TOKEN" ]]; then
   if [[ -n "$TELEGRAM_WEBHOOK_BASE_URL" ]]; then
     echo "  Telegram:        enabled (webhook)"
@@ -728,4 +743,4 @@ if [[ -n "$TELEGRAM_BOT_TOKEN" ]]; then
 else
   echo "  Telegram:        disabled"
 fi
-say_warn "Chat API is open by default; keep docker ports bound to 127.0.0.1 or add your own network controls."
+say_warn "/chat and /mcp on port 9900 need no key; keep port 9900 published on 127.0.0.1 only."
