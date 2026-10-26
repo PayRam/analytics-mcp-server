@@ -40,9 +40,8 @@ Returns per-day data with:
 		InputSchema: &protocol.JSONSchema{
 			Type: "object",
 			Properties: map[string]protocol.JSONSchema{
-				"token":    {Type: "string", Description: "Bearer token override; defaults to PAYRAM_ANALYTICS_TOKEN env"},
-				"base_url": {Type: "string", Description: "API base override; required if PAYRAM_ANALYTICS_BASE_URL env is not set"},
-				"days":     {Type: "integer", Description: "Fetch last N days (e.g., days=10 for last 10 days). This is the preferred way to specify time range."},
+				"token": {Type: "string", Description: "Bearer token override; defaults to PAYRAM_ANALYTICS_TOKEN env"},
+				"days":  {Type: "integer", Description: "Fetch last N days (e.g., days=10 for last 10 days). This is the preferred way to specify time range."},
 				"date_filter": {
 					Type:        "string",
 					Description: "Predefined date filter: today, yesterday, last_7_days, last_30_days, this_month, last_month. Default: last_7_days",

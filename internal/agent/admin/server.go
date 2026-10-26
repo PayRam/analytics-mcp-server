@@ -29,7 +29,9 @@ type Supervisor interface {
 	Logs(component string, tail int) []string
 }
 
-func NewMux(sup Supervisor) http.Handler {
+// NewMux builds the agent's HTTP routes. Every /admin route needs adminToken
+// in the X-MCP-Key header.
+func NewMux(sup Supervisor, adminToken string) http.Handler {
 	if sup == nil {
 		panic("supervisor must not be nil")
 	}
@@ -60,7 +62,7 @@ func NewMux(sup Supervisor) http.Handler {
 		mux.Handle("/mcp/", proxy)
 	}
 
-	adminGuard := NewAdminMiddlewareFromEnv()
+	adminGuard := NewAdminMiddleware(adminToken)
 	mux.Handle("/admin/version", adminGuard(http.HandlerFunc(adminVersionHandler)))
 	mux.Handle("/admin/update/available", adminGuard(http.HandlerFunc(updateAvailableHandler)))
 	mux.Handle("/admin/update/apply", adminGuard(http.HandlerFunc(updateApplyHandler(sup))))

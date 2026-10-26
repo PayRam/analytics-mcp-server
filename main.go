@@ -13,6 +13,7 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/payram/payram-analytics-mcp-server/internal/app"
 	"github.com/payram/payram-analytics-mcp-server/internal/chatapi"
+	"github.com/payram/payram-analytics-mcp-server/internal/listen"
 	"github.com/payram/payram-analytics-mcp-server/internal/payramauth"
 	"github.com/sirupsen/logrus"
 )
@@ -21,8 +22,9 @@ func main() {
 	_ = godotenv.Load()
 
 	// Flags / env
-	mcpAddr := flag.String("mcp-http", envOr("MCP_HTTP_ADDR", ":3333"), "MCP HTTP listen address (e.g., :3333)")
+	mcpAddr := flag.String("mcp-http", listen.Addr(os.Getenv("MCP_HTTP_ADDR"), "3333"), "MCP HTTP listen address; 127.0.0.1:3333 unless MCP_HTTP_ADDR or this flag names another")
 	chatPort := flag.String("chat-port", envOr("CHAT_API_PORT", "2358"), "Chat API port")
+	chatAddr := flag.String("chat-addr", os.Getenv("CHAT_API_ADDR"), "Chat API listen address; 127.0.0.1:<chat-port> unless CHAT_API_ADDR or this flag names another")
 	chatAPIKey := flag.String("chat-api-key", envOr("CHAT_API_KEY", ""), "Chat API bearer key")
 	chatAllowlist := flag.String("chat-allowlist", envOr("CHAT_API_ALLOWLIST", envOr("PAYRAM_AGENT_ADMIN_ALLOWLIST", "")), "comma-separated CIDR allowlist for chat api")
 	chatBotBypass := flag.String("chat-bot-bypass-token", envOr("CHAT_API_BOT_BYPASS_TOKEN", envOr("TELEGRAM_BOT_TOKEN", "")), "trusted Telegram bot token to bypass bearer auth")
@@ -53,7 +55,7 @@ func main() {
 		chatErrCh := make(chan error, 1)
 		go func() {
 			logger := logrus.New().WithField("component", "chat-api")
-			mcpURL := envOr("MCP_SERVER_URL", fmt.Sprintf("http://localhost%s/", strings.TrimPrefix(*mcpAddr, "")))
+			mcpURL := envOr("MCP_SERVER_URL", "http://"+listen.LocalDialAddr(*mcpAddr)+"/")
 
 			var authProvider func(ctx context.Context) (string, error)
 			if strings.TrimSpace(*payramBase) != "" && strings.TrimSpace(*payramUser) != "" && strings.TrimSpace(*payramPass) != "" {
@@ -65,12 +67,16 @@ func main() {
 			mux := http.NewServeMux()
 			h.Register(mux)
 
+			addr := listen.Addr(*chatAddr, *chatPort)
+			if warning := listen.ExposureWarning("Chat API", addr); warning != "" {
+				logger.Warn(warning)
+			}
 			srv := &http.Server{
-				Addr:              ":" + strings.TrimPrefix(*chatPort, ":"),
+				Addr:              addr,
 				Handler:           mux,
 				ReadHeaderTimeout: 5 * time.Second,
 			}
-			logger.Infof("Chat API listening on :%s (model=%s mcp=%s)", strings.TrimPrefix(*chatPort, ":"), *openaiModel, mcpURL)
+			logger.Infof("Chat API listening on %s (model=%s mcp=%s)", addr, *openaiModel, mcpURL)
 			if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 				chatErrCh <- fmt.Errorf("chat api: %w", err)
 			}

@@ -22,18 +22,16 @@ func (s *spySupervisor) Logs(string, int) []string { return nil }
 func TestSecretsHandlers(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("PAYRAM_AGENT_HOME", home)
-	t.Setenv("PAYRAM_AGENT_ADMIN_TOKEN", "tok")
-	t.Setenv("PAYRAM_AGENT_ADMIN_ALLOWLIST", "127.0.0.1/32")
 
 	sup := &spySupervisor{}
-	mux := NewMux(sup)
+	mux := NewMux(sup, "tok")
 
 	// PUT key
 	body := map[string]string{"openai_api_key": "sk-test"}
 	buf, _ := json.Marshal(body)
 	req := httptest.NewRequest(http.MethodPut, "/admin/secrets/openai", bytes.NewReader(buf))
 	req.RemoteAddr = "127.0.0.1:1234"
-	req.Header.Set(adminKeyHeader, "tok")
+	req.Header.Set(KeyHeader, "tok")
 	rr := httptest.NewRecorder()
 	mux.ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
@@ -46,7 +44,7 @@ func TestSecretsHandlers(t *testing.T) {
 	// Status should show set
 	req = httptest.NewRequest(http.MethodGet, "/admin/secrets/status", nil)
 	req.RemoteAddr = "127.0.0.1:1234"
-	req.Header.Set(adminKeyHeader, "tok")
+	req.Header.Set(KeyHeader, "tok")
 	rr = httptest.NewRecorder()
 	mux.ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
@@ -68,7 +66,7 @@ func TestSecretsHandlers(t *testing.T) {
 	// Delete
 	req = httptest.NewRequest(http.MethodDelete, "/admin/secrets/openai", nil)
 	req.RemoteAddr = "127.0.0.1:1234"
-	req.Header.Set(adminKeyHeader, "tok")
+	req.Header.Set(KeyHeader, "tok")
 	rr = httptest.NewRecorder()
 	mux.ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
@@ -78,7 +76,7 @@ func TestSecretsHandlers(t *testing.T) {
 	// Status should show missing
 	req = httptest.NewRequest(http.MethodGet, "/admin/secrets/status", nil)
 	req.RemoteAddr = "127.0.0.1:1234"
-	req.Header.Set(adminKeyHeader, "tok")
+	req.Header.Set(KeyHeader, "tok")
 	rr = httptest.NewRecorder()
 	mux.ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {

@@ -31,7 +31,6 @@ func (t *payramPaymentLinkTool) Descriptor() protocol.ToolDescriptor {
 			Type: "object",
 			Properties: map[string]protocol.JSONSchema{
 				"token":          {Type: "string", Description: "Bearer token override; defaults to PAYRAM_ANALYTICS_TOKEN env"},
-				"base_url":       {Type: "string", Description: "API base override; required if PAYRAM_ANALYTICS_BASE_URL env is not set"},
 				"project_id":     {Type: "integer", Description: "Project ID; if omitted and only one project exists, it will be auto-selected"},
 				"project_name":   {Type: "string", Description: "Project name (alternative to project_id); will be matched case-insensitively"},
 				"customer_id":    {Type: "string", Description: "Customer ID (required)"},

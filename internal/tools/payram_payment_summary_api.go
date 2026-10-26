@@ -30,7 +30,6 @@ func (t *payramPaymentSummaryTool) Descriptor() protocol.ToolDescriptor {
 			Type: "object",
 			Properties: map[string]protocol.JSONSchema{
 				"token":      {Type: "string", Description: "Bearer token override; defaults to PAYRAM_ANALYTICS_TOKEN env"},
-				"base_url":   {Type: "string", Description: "API base override; required if PAYRAM_ANALYTICS_BASE_URL env is not set"},
 				"project_id": {Type: "integer", Description: "Optional project ID; when omitted or 0, fetches the summary across all projects"},
 			},
 		},
@@ -118,8 +117,7 @@ func (t *payramProjectsListTool) Descriptor() protocol.ToolDescriptor {
 		InputSchema: &protocol.JSONSchema{
 			Type: "object",
 			Properties: map[string]protocol.JSONSchema{
-				"token":    {Type: "string", Description: "Bearer token override; defaults to PAYRAM_ANALYTICS_TOKEN env"},
-				"base_url": {Type: "string", Description: "API base override; required if PAYRAM_ANALYTICS_BASE_URL env is not set"},
+				"token": {Type: "string", Description: "Bearer token override; defaults to PAYRAM_ANALYTICS_TOKEN env"},
 			},
 		},
 	}
@@ -209,7 +207,6 @@ func (t *payramPaymentSearchTool) Descriptor() protocol.ToolDescriptor {
 			Type: "object",
 			Properties: map[string]protocol.JSONSchema{
 				"token":          {Type: "string", Description: "Bearer token override; defaults to PAYRAM_ANALYTICS_TOKEN env"},
-				"base_url":       {Type: "string", Description: "API base override; required if PAYRAM_ANALYTICS_BASE_URL env is not set"},
 				"project_id":     {Type: "integer", Description: "Optional project ID; when omitted or 0, searches across all projects"},
 				"query":          {Type: "string", Description: "Free-text query (e.g., reference ID, invoice ID)"},
 				"sort_by":        {Type: "string", Description: "Sort field (default: createdAt)"},

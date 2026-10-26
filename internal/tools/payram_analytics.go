@@ -35,10 +35,6 @@ func (t *payramAnalyticsTool) Descriptor() protocol.ToolDescriptor {
 					Type:        "string",
 					Description: "Bearer token override; defaults to PAYRAM_ANALYTICS_TOKEN env",
 				},
-				"base_url": {
-					Type:        "string",
-					Description: "API base override; required if PAYRAM_ANALYTICS_BASE_URL env is not set",
-				},
 				"action": {
 					Type:        "string",
 					Enum:        []string{"list_groups", "graph_data"},
