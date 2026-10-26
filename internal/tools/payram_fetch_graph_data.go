@@ -47,7 +47,6 @@ For per-day transaction counts, use group_id=2, graph_id=8 with appropriate date
 			Type: "object",
 			Properties: map[string]protocol.JSONSchema{
 				"token":    {Type: "string", Description: "Bearer token override; defaults to PAYRAM_ANALYTICS_TOKEN env"},
-				"base_url": {Type: "string", Description: "API base override; required if PAYRAM_ANALYTICS_BASE_URL env is not set"},
 				"group_id": {Type: "integer", Description: "Analytics group ID (required). Use payram_discover_analytics to find available groups."},
 				"graph_id": {Type: "integer", Description: "Graph ID within the group (required). Use payram_discover_analytics to find available graphs."},
 				"days":     {Type: "integer", Description: "If set, fetch last N days using a custom date range"},

@@ -40,8 +40,7 @@ Returns data from both periods for comparison including:
 		InputSchema: &protocol.JSONSchema{
 			Type: "object",
 			Properties: map[string]protocol.JSONSchema{
-				"token":    {Type: "string", Description: "Bearer token override; defaults to PAYRAM_ANALYTICS_TOKEN env"},
-				"base_url": {Type: "string", Description: "API base override; required if PAYRAM_ANALYTICS_BASE_URL env is not set"},
+				"token": {Type: "string", Description: "Bearer token override; defaults to PAYRAM_ANALYTICS_TOKEN env"},
 				"period1": {
 					Type:        "string",
 					Description: "First period: today, yesterday, last_7_days, last_30_days, this_month, last_month, last_6_months",

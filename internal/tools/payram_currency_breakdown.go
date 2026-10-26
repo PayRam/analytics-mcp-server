@@ -40,9 +40,8 @@ Returns payment amounts grouped by currency. If currency_code is specified, retu
 		InputSchema: &protocol.JSONSchema{
 			Type: "object",
 			Properties: map[string]protocol.JSONSchema{
-				"token":    {Type: "string", Description: "Bearer token override; defaults to PAYRAM_ANALYTICS_TOKEN env"},
-				"base_url": {Type: "string", Description: "API base override; required if PAYRAM_ANALYTICS_BASE_URL env is not set"},
-				"days":     {Type: "integer", Description: "Fetch last N days (e.g., 5, 7, 30, 90)"},
+				"token": {Type: "string", Description: "Bearer token override; defaults to PAYRAM_ANALYTICS_TOKEN env"},
+				"days":  {Type: "integer", Description: "Fetch last N days (e.g., 5, 7, 30, 90)"},
 				"date_filter": {
 					Type:        "string",
 					Description: "Date filter: today, yesterday, last_7_days, last_30_days, this_month, last_month, last_6_months, forever. Default: last_30_days",

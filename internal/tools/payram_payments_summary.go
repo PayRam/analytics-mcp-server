@@ -32,9 +32,8 @@ func (t *payramPaymentsSummaryTool) Descriptor() protocol.ToolDescriptor {
 		InputSchema: &protocol.JSONSchema{
 			Type: "object",
 			Properties: map[string]protocol.JSONSchema{
-				"token":    {Type: "string", Description: "Bearer token override; defaults to PAYRAM_ANALYTICS_TOKEN env"},
-				"base_url": {Type: "string", Description: "API base override; required if PAYRAM_ANALYTICS_BASE_URL env is not set"},
-				"days":     {Type: "integer", Description: "If set, fetch last N days using a custom range (overrides date_filter)"},
+				"token": {Type: "string", Description: "Bearer token override; defaults to PAYRAM_ANALYTICS_TOKEN env"},
+				"days":  {Type: "integer", Description: "If set, fetch last N days using a custom range (overrides date_filter)"},
 				"date_filter": {
 					Type:        "string",
 					Description: "analytics_date_filter (today, yesterday, last_7_days, last_30_days, this_month, last_month, last_6_months, forever, custom). Default last_30_days. If user asks for 'last N days' or any other range, pass that string here and include custom_start_date/custom_end_date or let the tool auto-convert to custom.",
