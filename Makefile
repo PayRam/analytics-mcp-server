@@ -35,10 +35,10 @@ help:
 	@echo "  make build-all            Build app, mcp-server, Chat API, bot, and agent"
 	@echo "  make run-app              Run combined app (MCP 3333 + Chat API 2358)"
 	@echo "  make run-bot              Run Telegram bot"
-	@echo "  make run-mcp              Run mcp-server server on :3333"
-	@echo "  make run-chat             Run Chat API on :2358 (requires OPENAI_API_KEY)"
+	@echo "  make run-mcp              Run mcp-server server on 127.0.0.1:3333"
+	@echo "  make run-chat             Run Chat API on 127.0.0.1:2358 (requires OPENAI_API_KEY)"
 	@echo "  make run-all              Run supervisor with chat, mcp, and bot"
-	@echo "  make run-agent            Run supervisor agent on :9900 (PAYRAM_AGENT_HOME=$(AGENT_HOME))"
+	@echo "  make run-agent            Run supervisor agent on 127.0.0.1:9900 (PAYRAM_AGENT_HOME=$(AGENT_HOME))"
 	@echo "  make precommit            fmt-check + vet + test + build-all"
 	@echo "  make commit               Guide an interactive conventional commit"
 	@echo "  make clean                Remove build artifacts and coverage files"
@@ -129,7 +129,7 @@ run-all:
 
 .PHONY: run-mcp
 run-mcp:
-	$(GO) run cmd/mcp-server/main.go --http :3333
+	$(GO) run cmd/mcp-server/main.go --http 127.0.0.1:3333
 
 .PHONY: run-chat
 run-chat:

@@ -11,6 +11,7 @@ import (
 
 	"github.com/joho/godotenv"
 	"github.com/payram/payram-analytics-mcp-server/internal/chatapi"
+	"github.com/payram/payram-analytics-mcp-server/internal/listen"
 	"github.com/payram/payram-analytics-mcp-server/internal/logging"
 	"github.com/payram/payram-analytics-mcp-server/internal/payramauth"
 	"github.com/payram/payram-analytics-mcp-server/internal/version"
@@ -26,6 +27,7 @@ func main() {
 	defer cleanup()
 
 	port := envOr("CHAT_API_PORT", "2358")
+	addr := envOr("CHAT_API_ADDR", "")
 	apiKey := envOr("CHAT_API_KEY", "")
 	allowlist := envOr("CHAT_API_ALLOWLIST", envOr("PAYRAM_AGENT_ADMIN_ALLOWLIST", ""))
 	openaiKey := envOr("OPENAI_API_KEY", "")
@@ -38,6 +40,7 @@ func main() {
 	payramPass := envOr("PAYRAM_DASHBOARD_PASSWORD", "")
 
 	flag.StringVar(&port, "port", port, "port to listen on")
+	flag.StringVar(&addr, "addr", addr, "listen address; 127.0.0.1:<port> unless CHAT_API_ADDR or this flag names another")
 	flag.StringVar(&apiKey, "api-key", apiKey, "chat API bearer key")
 	flag.StringVar(&allowlist, "allowlist", allowlist, "comma-separated CIDR allowlist for chat api")
 	flag.StringVar(&openaiKey, "openai-key", openaiKey, "OpenAI API key")
@@ -70,13 +73,17 @@ func main() {
 
 	handler := logRequests(logger, mux)
 
+	addr = listen.Addr(addr, port)
+	if warning := listen.ExposureWarning("Chat API", addr); warning != "" {
+		logger.Warn(warning)
+	}
 	srv := &http.Server{
-		Addr:              ":" + port,
+		Addr:              addr,
 		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
-	logger.Infof("Chat API listening on :%s (model=%s mcp=%s)", port, openaiModel, mcpURL)
+	logger.Infof("Chat API listening on %s (model=%s mcp=%s)", addr, openaiModel, mcpURL)
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		logger.Fatalf("server error: %v", err)
 	}

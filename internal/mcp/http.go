@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/payram/payram-analytics-mcp-server/internal/listen"
 	"github.com/payram/payram-analytics-mcp-server/internal/logging"
 	"github.com/payram/payram-analytics-mcp-server/internal/protocol"
 	"github.com/payram/payram-analytics-mcp-server/internal/version"
@@ -60,6 +61,9 @@ func RunHTTP(server *Server, addr string) error {
 		logRequest(logger, r, rec, start)
 	})
 
+	if warning := listen.ExposureWarning("MCP server", addr); warning != "" {
+		logger.Warn(warning)
+	}
 	logger.Infof("HTTP MCP server listening on %s", addr)
 	return http.ListenAndServe(addr, nil)
 }
