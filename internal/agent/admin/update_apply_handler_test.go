@@ -74,8 +74,6 @@ func TestUpdateApplySuccess(t *testing.T) {
 	mcpHealth := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }))
 	defer mcpHealth.Close()
 
-	t.Setenv("PAYRAM_AGENT_ADMIN_TOKEN", "tok")
-	t.Setenv("PAYRAM_AGENT_ADMIN_ALLOWLIST", "")
 	t.Setenv("PAYRAM_AGENT_UPDATE_BASE_URL", srv.URL)
 	t.Setenv("PAYRAM_AGENT_UPDATE_PUBKEY_B64", base64.StdEncoding.EncodeToString(pub))
 	t.Setenv("PAYRAM_CORE_URL", core.URL)
@@ -83,11 +81,11 @@ func TestUpdateApplySuccess(t *testing.T) {
 	t.Setenv("PAYRAM_MCP_PORT", portFromURL(mcpHealth.URL))
 
 	sup := &fakeSupervisor{}
-	handler := NewMux(sup)
+	handler := NewMux(sup, "tok")
 
 	req := httptest.NewRequest(http.MethodPost, "/admin/update/apply", nil)
 	req.RemoteAddr = "127.0.0.1:1234"
-	req.Header.Set(adminKeyHeader, "tok")
+	req.Header.Set(KeyHeader, "tok")
 	rr := httptest.NewRecorder()
 
 	handler.ServeHTTP(rr, req)
@@ -173,19 +171,17 @@ func TestUpdateApplyIgnoreCompatNoCoreURL(t *testing.T) {
 	mcpHealth := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }))
 	defer mcpHealth.Close()
 
-	t.Setenv("PAYRAM_AGENT_ADMIN_TOKEN", "tok")
-	t.Setenv("PAYRAM_AGENT_ADMIN_ALLOWLIST", "")
 	t.Setenv("PAYRAM_AGENT_UPDATE_BASE_URL", srv.URL)
 	t.Setenv("PAYRAM_AGENT_UPDATE_PUBKEY_B64", base64.StdEncoding.EncodeToString(pub))
 	t.Setenv("PAYRAM_CHAT_PORT", portFromURL(chatHealth.URL))
 	t.Setenv("PAYRAM_MCP_PORT", portFromURL(mcpHealth.URL))
 
 	sup := &fakeSupervisor{}
-	handler := NewMux(sup)
+	handler := NewMux(sup, "tok")
 
 	req := httptest.NewRequest(http.MethodPost, "/admin/update/apply", nil)
 	req.RemoteAddr = "127.0.0.1:1234"
-	req.Header.Set(adminKeyHeader, "tok")
+	req.Header.Set(KeyHeader, "tok")
 	rr := httptest.NewRecorder()
 
 	handler.ServeHTTP(rr, req)
@@ -267,8 +263,6 @@ func TestUpdateApplyHealthRollback(t *testing.T) {
 	mcpHealth := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusInternalServerError) }))
 	defer mcpHealth.Close()
 
-	t.Setenv("PAYRAM_AGENT_ADMIN_TOKEN", "tok")
-	t.Setenv("PAYRAM_AGENT_ADMIN_ALLOWLIST", "")
 	t.Setenv("PAYRAM_AGENT_UPDATE_BASE_URL", srv.URL)
 	t.Setenv("PAYRAM_AGENT_UPDATE_PUBKEY_B64", base64.StdEncoding.EncodeToString(pub))
 	t.Setenv("PAYRAM_CORE_URL", core.URL)
@@ -276,11 +270,11 @@ func TestUpdateApplyHealthRollback(t *testing.T) {
 	t.Setenv("PAYRAM_MCP_PORT", portFromURL(mcpHealth.URL))
 
 	sup := &fakeSupervisor{}
-	handler := NewMux(sup)
+	handler := NewMux(sup, "tok")
 
 	req := httptest.NewRequest(http.MethodPost, "/admin/update/apply", nil)
 	req.RemoteAddr = "127.0.0.1:1234"
-	req.Header.Set(adminKeyHeader, "tok")
+	req.Header.Set(KeyHeader, "tok")
 	rr := httptest.NewRecorder()
 
 	handler.ServeHTTP(rr, req)
@@ -346,17 +340,15 @@ func TestRollbackEndpoint(t *testing.T) {
 	mcpHealth := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }))
 	defer mcpHealth.Close()
 
-	t.Setenv("PAYRAM_AGENT_ADMIN_TOKEN", "tok")
-	t.Setenv("PAYRAM_AGENT_ADMIN_ALLOWLIST", "")
 	t.Setenv("PAYRAM_CHAT_PORT", portFromURL(chatHealth.URL))
 	t.Setenv("PAYRAM_MCP_PORT", portFromURL(mcpHealth.URL))
 
 	sup := &fakeSupervisor{}
-	handler := NewMux(sup)
+	handler := NewMux(sup, "tok")
 
 	req := httptest.NewRequest(http.MethodPost, "/admin/update/rollback", nil)
 	req.RemoteAddr = "127.0.0.1:1234"
-	req.Header.Set(adminKeyHeader, "tok")
+	req.Header.Set(KeyHeader, "tok")
 	rr := httptest.NewRecorder()
 
 	handler.ServeHTTP(rr, req)

@@ -1,51 +1,67 @@
 package admin
 
 import (
-	"net"
+	"crypto/rand"
+	"crypto/subtle"
+	"encoding/hex"
+	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"strings"
 )
 
-func NewAdminMiddleware(token, allowlist string) func(http.Handler) http.Handler {
-	guard := &adminMiddleware{token: token, allowed: parseAllowlist(allowlist)}
+// KeyHeader carries the admin token on every /admin request.
+const KeyHeader = "X-MCP-Key"
+
+// TokenEnv names the setting that holds the admin token.
+const TokenEnv = "PAYRAM_AGENT_ADMIN_TOKEN"
+
+// ResolveAdminToken returns the admin token from PAYRAM_AGENT_ADMIN_TOKEN.
+// When it is not set, it returns a random token that exists only in this
+// process (isGenerated is true): /admin then answers the agent's own update
+// loop and nobody else.
+func ResolveAdminToken() (token string, isGenerated bool, err error) {
+	if v := strings.TrimSpace(os.Getenv(TokenEnv)); v != "" {
+		return v, false, nil
+	}
+	buf := make([]byte, 32)
+	if _, err := rand.Read(buf); err != nil {
+		log.Printf("admin -> ResolveAdminToken: generate token: %v", err)
+		return "", false, fmt.Errorf("generate admin token: %w", err)
+	}
+	return hex.EncodeToString(buf), true, nil
+}
+
+// NewAdminMiddleware guards /admin: every request must carry the admin token
+// in X-MCP-Key. The caller's address is never trusted. Docker hands host
+// loopback traffic to the container from 172.17.0.1, and every container on
+// a bridge network sits in 172.16.0.0/12, so an address rule lets them all in.
+// An empty token refuses every request.
+func NewAdminMiddleware(token string) func(http.Handler) http.Handler {
+	guard := &adminMiddleware{token: strings.TrimSpace(token)}
 	return guard.wrap
 }
 
-func NewAdminMiddlewareFromEnv() func(http.Handler) http.Handler {
-	token := os.Getenv("PAYRAM_AGENT_ADMIN_TOKEN")
-	allowlist := os.Getenv("PAYRAM_AGENT_ADMIN_ALLOWLIST")
-	return NewAdminMiddleware(token, allowlist)
-}
-
 type adminMiddleware struct {
-	token   string
-	allowed []*net.IPNet
+	token string
 }
-
-const adminKeyHeader = "X-MCP-Key"
 
 func (m *adminMiddleware) wrap(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ip := parseRemoteIP(r.RemoteAddr)
-		if m.isAllowed(ip) {
-			next.ServeHTTP(w, r)
-			return
-		}
-
 		if m.token == "" {
-			RespondError(w, http.StatusUnauthorized, "ADMIN_TOKEN_MISSING", "admin token not configured")
+			m.refuse(w, r, "ADMIN_TOKEN_MISSING", "admin token not configured")
 			return
 		}
 
-		key := strings.TrimSpace(r.Header.Get(adminKeyHeader))
+		key := strings.TrimSpace(r.Header.Get(KeyHeader))
 		if key == "" {
-			RespondError(w, http.StatusUnauthorized, "UNAUTHORIZED", "missing or invalid admin key")
+			m.refuse(w, r, "UNAUTHORIZED", "missing admin key")
 			return
 		}
 
-		if key != m.token {
-			RespondError(w, http.StatusUnauthorized, "UNAUTHORIZED", "invalid admin key")
+		if subtle.ConstantTimeCompare([]byte(key), []byte(m.token)) != 1 {
+			m.refuse(w, r, "UNAUTHORIZED", "invalid admin key")
 			return
 		}
 
@@ -53,48 +69,7 @@ func (m *adminMiddleware) wrap(next http.Handler) http.Handler {
 	})
 }
 
-func (m *adminMiddleware) isAllowed(ip net.IP) bool {
-	if ip == nil {
-		return false
-	}
-
-	if ip.IsLoopback() {
-		return true
-	}
-
-	for _, network := range m.allowed {
-		if network.Contains(ip) {
-			return true
-		}
-	}
-
-	return false
-}
-
-func parseRemoteIP(remoteAddr string) net.IP {
-	host, _, err := net.SplitHostPort(remoteAddr)
-	if err == nil {
-		return net.ParseIP(host)
-	}
-
-	return net.ParseIP(remoteAddr)
-}
-
-func parseAllowlist(raw string) []*net.IPNet {
-	var networks []*net.IPNet
-
-	for _, entry := range strings.Split(raw, ",") {
-		entry = strings.TrimSpace(entry)
-		if entry == "" {
-			continue
-		}
-
-		_, network, err := net.ParseCIDR(entry)
-		if err != nil {
-			continue
-		}
-		networks = append(networks, network)
-	}
-
-	return networks
+func (m *adminMiddleware) refuse(w http.ResponseWriter, r *http.Request, code, message string) {
+	log.Printf("adminMiddleware -> wrap: refused %s %s from %s: %s", r.Method, r.URL.Path, r.RemoteAddr, message)
+	RespondError(w, http.StatusUnauthorized, code, message)
 }

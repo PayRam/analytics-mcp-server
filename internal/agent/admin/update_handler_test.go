@@ -56,18 +56,16 @@ func TestUpdateAvailableSuccess(t *testing.T) {
 	defer srv.Close()
 
 	t.Setenv("PAYRAM_AGENT_HOME", home)
-	t.Setenv("PAYRAM_AGENT_ADMIN_TOKEN", "tok")
-	t.Setenv("PAYRAM_AGENT_ADMIN_ALLOWLIST", "")
 	t.Setenv("PAYRAM_AGENT_UPDATE_BASE_URL", srv.URL)
 	t.Setenv("PAYRAM_AGENT_UPDATE_PUBKEY_B64", base64.StdEncoding.EncodeToString(pub))
 	t.Setenv("PAYRAM_CORE_URL", core.URL)
 
 	sup := &supervisor.Supervisor{}
-	handler := NewMux(sup)
+	handler := NewMux(sup, "tok")
 
 	req := httptest.NewRequest(http.MethodGet, "/admin/update/available?channel=stable", nil)
 	req.RemoteAddr = "127.0.0.1:1234"
-	req.Header.Set(adminKeyHeader, "tok")
+	req.Header.Set(KeyHeader, "tok")
 	rr := httptest.NewRecorder()
 
 	handler.ServeHTTP(rr, req)
@@ -126,8 +124,6 @@ func TestUpdateAvailableAlreadyCurrent(t *testing.T) {
 	defer core.Close()
 
 	t.Setenv("PAYRAM_AGENT_HOME", home)
-	t.Setenv("PAYRAM_AGENT_ADMIN_TOKEN", "tok")
-	t.Setenv("PAYRAM_AGENT_ADMIN_ALLOWLIST", "")
 	t.Setenv("PAYRAM_AGENT_UPDATE_BASE_URL", srv.URL)
 	t.Setenv("PAYRAM_AGENT_UPDATE_PUBKEY_B64", base64.StdEncoding.EncodeToString(pub))
 	t.Setenv("PAYRAM_CORE_URL", core.URL)
@@ -137,11 +133,11 @@ func TestUpdateAvailableAlreadyCurrent(t *testing.T) {
 	}
 
 	sup := &supervisor.Supervisor{}
-	handler := NewMux(sup)
+	handler := NewMux(sup, "tok")
 
 	req := httptest.NewRequest(http.MethodGet, "/admin/update/available", nil)
 	req.RemoteAddr = "127.0.0.1:1234"
-	req.Header.Set(adminKeyHeader, "tok")
+	req.Header.Set(KeyHeader, "tok")
 	rr := httptest.NewRecorder()
 
 	handler.ServeHTTP(rr, req)
@@ -191,18 +187,16 @@ func TestUpdateAvailableSignatureInvalid(t *testing.T) {
 	wrongPub, _, _ := ed25519.GenerateKey(rand.Reader)
 
 	t.Setenv("PAYRAM_AGENT_HOME", home)
-	t.Setenv("PAYRAM_AGENT_ADMIN_TOKEN", "tok")
-	t.Setenv("PAYRAM_AGENT_ADMIN_ALLOWLIST", "")
 	t.Setenv("PAYRAM_AGENT_UPDATE_BASE_URL", srv.URL)
 	t.Setenv("PAYRAM_AGENT_UPDATE_PUBKEY_B64", base64.StdEncoding.EncodeToString(wrongPub))
 	t.Setenv("PAYRAM_CORE_URL", core.URL)
 
 	sup := &supervisor.Supervisor{}
-	handler := NewMux(sup)
+	handler := NewMux(sup, "tok")
 
 	req := httptest.NewRequest(http.MethodGet, "/admin/update/available", nil)
 	req.RemoteAddr = "127.0.0.1:1234"
-	req.Header.Set(adminKeyHeader, "tok")
+	req.Header.Set(KeyHeader, "tok")
 	rr := httptest.NewRecorder()
 
 	handler.ServeHTTP(rr, req)
@@ -253,18 +247,16 @@ func TestUpdateAvailableCoreIncompatible(t *testing.T) {
 	defer core.Close()
 
 	t.Setenv("PAYRAM_AGENT_HOME", home)
-	t.Setenv("PAYRAM_AGENT_ADMIN_TOKEN", "tok")
-	t.Setenv("PAYRAM_AGENT_ADMIN_ALLOWLIST", "")
 	t.Setenv("PAYRAM_AGENT_UPDATE_BASE_URL", srv.URL)
 	t.Setenv("PAYRAM_AGENT_UPDATE_PUBKEY_B64", base64.StdEncoding.EncodeToString(pub))
 	t.Setenv("PAYRAM_CORE_URL", core.URL)
 
 	sup := &supervisor.Supervisor{}
-	handler := NewMux(sup)
+	handler := NewMux(sup, "tok")
 
 	req := httptest.NewRequest(http.MethodGet, "/admin/update/available", nil)
 	req.RemoteAddr = "127.0.0.1:1234"
-	req.Header.Set(adminKeyHeader, "tok")
+	req.Header.Set(KeyHeader, "tok")
 	rr := httptest.NewRecorder()
 
 	handler.ServeHTTP(rr, req)
@@ -307,18 +299,16 @@ func TestUpdateAvailableCoreUnreachable(t *testing.T) {
 	deadCore.Close()
 
 	t.Setenv("PAYRAM_AGENT_HOME", home)
-	t.Setenv("PAYRAM_AGENT_ADMIN_TOKEN", "tok")
-	t.Setenv("PAYRAM_AGENT_ADMIN_ALLOWLIST", "")
 	t.Setenv("PAYRAM_AGENT_UPDATE_BASE_URL", srv.URL)
 	t.Setenv("PAYRAM_AGENT_UPDATE_PUBKEY_B64", base64.StdEncoding.EncodeToString(pub))
 	t.Setenv("PAYRAM_CORE_URL", deadCore.URL) // closed server
 
 	sup := &supervisor.Supervisor{}
-	handler := NewMux(sup)
+	handler := NewMux(sup, "tok")
 
 	req := httptest.NewRequest(http.MethodGet, "/admin/update/available", nil)
 	req.RemoteAddr = "127.0.0.1:1234"
-	req.Header.Set(adminKeyHeader, "tok")
+	req.Header.Set(KeyHeader, "tok")
 	rr := httptest.NewRecorder()
 
 	handler.ServeHTTP(rr, req)
@@ -357,18 +347,16 @@ func TestUpdateAvailableIgnoreCompatNoCoreURL(t *testing.T) {
 	defer srv.Close()
 
 	t.Setenv("PAYRAM_AGENT_HOME", home)
-	t.Setenv("PAYRAM_AGENT_ADMIN_TOKEN", "tok")
-	t.Setenv("PAYRAM_AGENT_ADMIN_ALLOWLIST", "")
 	t.Setenv("PAYRAM_AGENT_UPDATE_BASE_URL", srv.URL)
 	t.Setenv("PAYRAM_AGENT_UPDATE_PUBKEY_B64", base64.StdEncoding.EncodeToString(pub))
 	t.Setenv("PAYRAM_AGENT_IGNORE_COMPAT", "true")
 
 	sup := &supervisor.Supervisor{}
-	handler := NewMux(sup)
+	handler := NewMux(sup, "tok")
 
 	req := httptest.NewRequest(http.MethodGet, "/admin/update/available", nil)
 	req.RemoteAddr = "127.0.0.1:1234"
-	req.Header.Set(adminKeyHeader, "tok")
+	req.Header.Set(KeyHeader, "tok")
 	rr := httptest.NewRecorder()
 
 	handler.ServeHTTP(rr, req)

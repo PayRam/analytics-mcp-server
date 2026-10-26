@@ -1,157 +1,180 @@
 package admin
 
 import (
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 )
 
-func TestMiddlewareMissingToken(t *testing.T) {
-	t.Setenv("PAYRAM_AGENT_ADMIN_TOKEN", "")
-	t.Setenv("PAYRAM_AGENT_ADMIN_ALLOWLIST", "")
+// Callers that the old address rule let in without a token: host loopback,
+// the Docker bridge gateway that host traffic arrives from (172.17.0.1), and
+// other containers on Docker bridge networks.
+var formerlyTrustedAddrs = []string{
+	"127.0.0.1:1234",
+	"[::1]:1234",
+	"172.17.0.1:40000",
+	"172.17.0.5:40000",
+	"172.18.0.3:40000",
+}
 
-	handler := NewAdminMiddlewareFromEnv()(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+func guardedOKHandler(t *testing.T, token string, reached *bool) http.Handler {
+	t.Helper()
+	return NewAdminMiddleware(token)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		*reached = true
 		RespondOK(w, http.StatusOK, map[string]string{"value": "ok"})
 	}))
+}
 
-	req := httptest.NewRequest(http.MethodGet, "/admin/version", nil)
-	req.RemoteAddr = "127.0.0.1:1234"
-	rr := httptest.NewRecorder()
+func TestMiddlewareRefusesEveryAddressWithoutToken(t *testing.T) {
+	for _, addr := range append(formerlyTrustedAddrs, "8.8.8.8:3333") {
+		reached := false
+		handler := guardedOKHandler(t, "secret", &reached)
 
-	handler.ServeHTTP(rr, req)
+		req := httptest.NewRequest(http.MethodPost, "/admin/update/apply", nil)
+		req.RemoteAddr = addr
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
 
-	if rr.Code != http.StatusOK {
-		t.Fatalf("expected status %d, got %d", http.StatusOK, rr.Code)
-	}
-
-	body := decodeBody(t, rr)
-	if ok, _ := body["ok"].(bool); !ok {
-		t.Fatalf("expected ok response, got %v", body)
+		if rr.Code != http.StatusUnauthorized {
+			t.Fatalf("%s without token: expected %d, got %d", addr, http.StatusUnauthorized, rr.Code)
+		}
+		if code := errorCode(t, decodeBody(t, rr)); code != "UNAUTHORIZED" {
+			t.Fatalf("%s without token: expected UNAUTHORIZED, got %s", addr, code)
+		}
+		if reached {
+			t.Fatalf("%s without token reached the admin handler", addr)
+		}
 	}
 }
 
-func TestMiddlewareWrongToken(t *testing.T) {
-	t.Setenv("PAYRAM_AGENT_ADMIN_TOKEN", "secret")
-	t.Setenv("PAYRAM_AGENT_ADMIN_ALLOWLIST", "")
+func TestMiddlewareRefusesWrongToken(t *testing.T) {
+	for _, addr := range formerlyTrustedAddrs {
+		reached := false
+		handler := guardedOKHandler(t, "secret", &reached)
 
-	handler := NewAdminMiddlewareFromEnv()(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		RespondOK(w, http.StatusOK, map[string]string{"value": "ok"})
-	}))
+		req := httptest.NewRequest(http.MethodGet, "/admin/version", nil)
+		req.RemoteAddr = addr
+		req.Header.Set(KeyHeader, "secreT")
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
 
-	req := httptest.NewRequest(http.MethodGet, "/admin/version", nil)
-	req.RemoteAddr = "8.8.8.8:3333" // not allowlisted
-	req.Header.Set(adminKeyHeader, "nope")
-	rr := httptest.NewRecorder()
-
-	handler.ServeHTTP(rr, req)
-
-	if rr.Code != http.StatusUnauthorized {
-		t.Fatalf("expected status %d, got %d", http.StatusUnauthorized, rr.Code)
-	}
-
-	body := decodeBody(t, rr)
-	if code := errorCode(t, body); code != "UNAUTHORIZED" {
-		t.Fatalf("expected error code UNAUTHORIZED, got %s", code)
+		if rr.Code != http.StatusUnauthorized || reached {
+			t.Fatalf("%s with wrong token: expected %d and no handler call, got %d (reached=%v)", addr, http.StatusUnauthorized, rr.Code, reached)
+		}
 	}
 }
 
-func TestMiddlewareAllowsLocalhost(t *testing.T) {
-	t.Setenv("PAYRAM_AGENT_ADMIN_TOKEN", "secret")
-	t.Setenv("PAYRAM_AGENT_ADMIN_ALLOWLIST", "")
+func TestMiddlewareAcceptsTokenFromAnyAddress(t *testing.T) {
+	for _, addr := range append(formerlyTrustedAddrs, "8.8.8.8:3333") {
+		reached := false
+		handler := guardedOKHandler(t, "secret", &reached)
 
-	handler := NewAdminMiddlewareFromEnv()(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		RespondOK(w, http.StatusOK, map[string]string{"value": "ok"})
-	}))
+		req := httptest.NewRequest(http.MethodGet, "/admin/version", nil)
+		req.RemoteAddr = addr
+		req.Header.Set(KeyHeader, "secret")
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
 
-	req := httptest.NewRequest(http.MethodGet, "/admin/version", nil)
-	req.RemoteAddr = "127.0.0.1:1234"
-	req.Header.Set(adminKeyHeader, "secret")
-	rr := httptest.NewRecorder()
-
-	handler.ServeHTTP(rr, req)
-
-	if rr.Code != http.StatusOK {
-		t.Fatalf("expected status %d, got %d", http.StatusOK, rr.Code)
-	}
-
-	body := decodeBody(t, rr)
-	if ok, _ := body["ok"].(bool); !ok {
-		t.Fatalf("expected ok response, got %v", body)
+		if rr.Code != http.StatusOK || !reached {
+			t.Fatalf("%s with token: expected %d, got %d (reached=%v)", addr, http.StatusOK, rr.Code, reached)
+		}
 	}
 }
 
-func TestMiddlewareAllowsCIDR(t *testing.T) {
-	t.Setenv("PAYRAM_AGENT_ADMIN_TOKEN", "secret")
-	t.Setenv("PAYRAM_AGENT_ADMIN_ALLOWLIST", "10.0.0.0/8")
+func TestMiddlewareWithoutConfiguredTokenRefusesEverything(t *testing.T) {
+	for _, header := range []string{"", "anything"} {
+		reached := false
+		handler := guardedOKHandler(t, "  ", &reached)
 
-	handler := NewAdminMiddlewareFromEnv()(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		RespondOK(w, http.StatusOK, map[string]string{"value": "ok"})
-	}))
+		req := httptest.NewRequest(http.MethodGet, "/admin/version", nil)
+		req.RemoteAddr = "127.0.0.1:1234"
+		if header != "" {
+			req.Header.Set(KeyHeader, header)
+		}
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
 
-	req := httptest.NewRequest(http.MethodGet, "/admin/version", nil)
-	req.RemoteAddr = "10.1.2.3:2358"
-	req.Header.Set(adminKeyHeader, "secret")
-	rr := httptest.NewRecorder()
-
-	handler.ServeHTTP(rr, req)
-
-	if rr.Code != http.StatusOK {
-		t.Fatalf("expected status %d, got %d", http.StatusOK, rr.Code)
-	}
-
-	body := decodeBody(t, rr)
-	if ok, _ := body["ok"].(bool); !ok {
-		t.Fatalf("expected ok response, got %v", body)
+		if rr.Code != http.StatusUnauthorized || reached {
+			t.Fatalf("empty configured token, header %q: expected %d and no handler call, got %d", header, http.StatusUnauthorized, rr.Code)
+		}
+		if code := errorCode(t, decodeBody(t, rr)); code != "ADMIN_TOKEN_MISSING" {
+			t.Fatalf("expected ADMIN_TOKEN_MISSING, got %s", code)
+		}
 	}
 }
 
-func TestMiddlewareNonAllowlistWithValidToken(t *testing.T) {
-	t.Setenv("PAYRAM_AGENT_ADMIN_TOKEN", "secret")
-	t.Setenv("PAYRAM_AGENT_ADMIN_ALLOWLIST", "")
+// Every /admin route on the real mux needs the token, and the old allowlist
+// setting no longer lets anyone in.
+func TestNewMuxGuardsEveryAdminRoute(t *testing.T) {
+	t.Setenv("PAYRAM_AGENT_HOME", t.TempDir())
+	t.Setenv("PAYRAM_AGENT_ADMIN_ALLOWLIST", "127.0.0.1/32,172.16.0.0/12")
+	mux := NewMux(&spySupervisor{}, "tok")
 
-	handler := NewAdminMiddlewareFromEnv()(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		RespondOK(w, http.StatusOK, map[string]string{"value": "ok"})
-	}))
-
-	req := httptest.NewRequest(http.MethodGet, "/admin/version", nil)
-	req.RemoteAddr = "8.8.8.8:3333" // not allowlisted
-	req.Header.Set(adminKeyHeader, "secret")
-	rr := httptest.NewRecorder()
-
-	handler.ServeHTTP(rr, req)
-
-	if rr.Code != http.StatusOK {
-		t.Fatalf("expected status %d, got %d", http.StatusOK, rr.Code)
+	routes := []struct{ method, path string }{
+		{http.MethodGet, "/admin/version"},
+		{http.MethodGet, "/admin/update/available"},
+		{http.MethodPost, "/admin/update/apply"},
+		{http.MethodPost, "/admin/update/rollback"},
+		{http.MethodGet, "/admin/update/status"},
+		{http.MethodPost, "/admin/child/restart"},
+		{http.MethodGet, "/admin/child/status"},
+		{http.MethodGet, "/admin/logs"},
+		{http.MethodPut, "/admin/secrets/openai"},
+		{http.MethodDelete, "/admin/secrets/openai"},
+		{http.MethodGet, "/admin/secrets/status"},
+	}
+	for _, route := range routes {
+		for _, addr := range []string{"127.0.0.1:1234", "172.17.0.1:40000"} {
+			req := httptest.NewRequest(route.method, route.path, nil)
+			req.RemoteAddr = addr
+			rr := httptest.NewRecorder()
+			mux.ServeHTTP(rr, req)
+			if rr.Code != http.StatusUnauthorized {
+				t.Fatalf("%s %s from %s without token: expected %d, got %d", route.method, route.path, addr, http.StatusUnauthorized, rr.Code)
+			}
+		}
 	}
 
-	body := decodeBody(t, rr)
-	if ok, _ := body["ok"].(bool); !ok {
-		t.Fatalf("expected ok response, got %v", body)
+	sup := &spySupervisor{}
+	mux = NewMux(sup, "tok")
+	req := httptest.NewRequest(http.MethodPost, "/admin/child/restart", nil)
+	req.RemoteAddr = "172.17.0.1:40000"
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+	if rr.Code != http.StatusUnauthorized || sup.restarts != 0 {
+		t.Fatalf("restart without token from the Docker gateway: expected 401 and no restart, got %d (restarts=%d)", rr.Code, sup.restarts)
 	}
 }
 
-func TestMiddlewareBlocksIP(t *testing.T) {
-	t.Setenv("PAYRAM_AGENT_ADMIN_TOKEN", "")
-	t.Setenv("PAYRAM_AGENT_ADMIN_ALLOWLIST", "")
-
-	handler := NewAdminMiddlewareFromEnv()(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		RespondOK(w, http.StatusOK, map[string]string{"value": "ok"})
-	}))
-
-	req := httptest.NewRequest(http.MethodGet, "/admin/version", nil)
-	req.RemoteAddr = "8.8.8.8:3333"
-	rr := httptest.NewRecorder()
-
-	handler.ServeHTTP(rr, req)
-
-	if rr.Code != http.StatusUnauthorized {
-		t.Fatalf("expected status %d, got %d", http.StatusUnauthorized, rr.Code)
+func TestResolveAdminTokenUsesSetting(t *testing.T) {
+	t.Setenv(TokenEnv, " configured ")
+	token, isGenerated, err := ResolveAdminToken()
+	if err != nil {
+		t.Fatalf("ResolveAdminToken: %v", err)
 	}
+	if token != "configured" || isGenerated {
+		t.Fatalf("expected the configured token, got %q (generated=%v)", token, isGenerated)
+	}
+}
 
-	body := decodeBody(t, rr)
-	if code := errorCode(t, body); code != "ADMIN_TOKEN_MISSING" {
-		t.Fatalf("expected error code ADMIN_TOKEN_MISSING, got %s", code)
+func TestResolveAdminTokenGeneratesWhenUnset(t *testing.T) {
+	t.Setenv(TokenEnv, "")
+	first, isGenerated, err := ResolveAdminToken()
+	if err != nil {
+		t.Fatalf("ResolveAdminToken: %v", err)
+	}
+	if !isGenerated {
+		t.Fatalf("expected a generated token")
+	}
+	raw, err := hex.DecodeString(first)
+	if err != nil || len(raw) != 32 {
+		t.Fatalf("expected 32 random bytes as hex, got %q", first)
+	}
+	second, _, _ := ResolveAdminToken()
+	if first == second {
+		t.Fatalf("two generated tokens are equal")
 	}
 }
 

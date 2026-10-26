@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -19,16 +18,14 @@ import (
 	"github.com/payram/payram-analytics-mcp-server/internal/agent/admin"
 	"github.com/payram/payram-analytics-mcp-server/internal/agent/supervisor"
 	"github.com/payram/payram-analytics-mcp-server/internal/agent/update"
+	"github.com/payram/payram-analytics-mcp-server/internal/listen"
 	"github.com/payram/payram-analytics-mcp-server/internal/logging"
 	"github.com/sirupsen/logrus"
 )
 
 func main() {
 	_ = godotenv.Load()
-	addr := os.Getenv("PAYRAM_AGENT_LISTEN_ADDR")
-	if addr == "" {
-		addr = ":9900"
-	}
+	addr := listen.Addr(os.Getenv("PAYRAM_AGENT_LISTEN_ADDR"), "9900")
 
 	if seeded, version, err := update.EnsureSeedRelease(context.Background(), update.HomeDir()); err != nil {
 		log.Fatalf("failed to seed release: %v", err)
@@ -49,7 +46,12 @@ func main() {
 
 	var logEntry *logrus.Entry
 
-	handler := admin.NewMux(sup)
+	adminToken, isAdminTokenGenerated, err := admin.ResolveAdminToken()
+	if err != nil {
+		log.Fatalf("agent -> main: resolve admin token: %v", err)
+	}
+
+	handler := admin.NewMux(sup, adminToken)
 	srv := &http.Server{
 		Addr:    addr,
 		Handler: handler,
@@ -66,7 +68,17 @@ func main() {
 		logEntry = logrus.New().WithField("component", "agent")
 	}
 
-	startAutoUpdateLoop(ctx, logEntry, addr)
+	if warning := listen.ExposureWarning("Agent (admin API and /mcp, /chat proxies)", addr); warning != "" {
+		logEntry.Warn(warning)
+	}
+	if isAdminTokenGenerated {
+		logEntry.Warnf("%s is not set: /admin answers only this agent's own update checks. Set it to call /admin yourself.", admin.TokenEnv)
+	}
+	if strings.TrimSpace(os.Getenv("PAYRAM_AGENT_ADMIN_ALLOWLIST")) != "" {
+		logEntry.Warnf("PAYRAM_AGENT_ADMIN_ALLOWLIST is ignored: every /admin request needs the %s header, whatever its address.", admin.KeyHeader)
+	}
+
+	startAutoUpdateLoop(ctx, logEntry, addr, adminToken)
 
 	go func() {
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
@@ -101,7 +113,7 @@ type updateAvailableResponse struct {
 	TargetVersion  string `json:"target_version"`
 }
 
-func startAutoUpdateLoop(ctx context.Context, logEntry *logrus.Entry, listenAddr string) {
+func startAutoUpdateLoop(ctx context.Context, logEntry *logrus.Entry, listenAddr, adminToken string) {
 	baseURL := strings.TrimSpace(os.Getenv("PAYRAM_AGENT_UPDATE_BASE_URL"))
 	pub := strings.TrimSpace(os.Getenv("PAYRAM_AGENT_UPDATE_PUBKEY_B64"))
 	if baseURL == "" || pub == "" {
@@ -114,7 +126,7 @@ func startAutoUpdateLoop(ctx context.Context, logEntry *logrus.Entry, listenAddr
 		channel = "stable"
 	}
 	interval := 6 * time.Hour
-	adminBase := "http://" + ensureHost(listenAddr)
+	adminBase := "http://" + listen.LocalDialAddr(listenAddr)
 
 	client := &http.Client{Timeout: 20 * time.Second}
 
@@ -127,7 +139,7 @@ func startAutoUpdateLoop(ctx context.Context, logEntry *logrus.Entry, listenAddr
 			case <-ctx.Done():
 				return
 			case <-timer.C:
-				runAutoUpdateOnce(ctx, client, adminBase, channel, logEntry)
+				runAutoUpdateOnce(ctx, client, adminBase, channel, adminToken, logEntry)
 				ticker := time.NewTicker(interval)
 				defer ticker.Stop()
 				for {
@@ -135,7 +147,7 @@ func startAutoUpdateLoop(ctx context.Context, logEntry *logrus.Entry, listenAddr
 					case <-ctx.Done():
 						return
 					case <-ticker.C:
-						runAutoUpdateOnce(ctx, client, adminBase, channel, logEntry)
+						runAutoUpdateOnce(ctx, client, adminBase, channel, adminToken, logEntry)
 					}
 				}
 			}
@@ -143,13 +155,16 @@ func startAutoUpdateLoop(ctx context.Context, logEntry *logrus.Entry, listenAddr
 	}()
 }
 
-func runAutoUpdateOnce(ctx context.Context, client *http.Client, adminBase, channel string, logEntry *logrus.Entry) {
+// runAutoUpdateOnce asks this agent's own admin API for an update and applies
+// it. Both calls carry the admin token: /admin trusts no caller by address.
+func runAutoUpdateOnce(ctx context.Context, client *http.Client, adminBase, channel, adminToken string, logEntry *logrus.Entry) {
 	availURL := fmt.Sprintf("%s/admin/update/available?channel=%s", strings.TrimRight(adminBase, "/"), url.QueryEscape(channel))
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, availURL, nil)
 	if err != nil {
 		logEntry.WithError(err).Warn("auto-update: build available request failed")
 		return
 	}
+	req.Header.Set(admin.KeyHeader, adminToken)
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -181,6 +196,7 @@ func runAutoUpdateOnce(ctx context.Context, client *http.Client, adminBase, chan
 		logEntry.WithError(err).Warn("auto-update: build apply request failed")
 		return
 	}
+	applyReq.Header.Set(admin.KeyHeader, adminToken)
 	applyResp, err := client.Do(applyReq)
 	if err != nil {
 		logEntry.WithError(err).Warn("auto-update: apply request failed")
@@ -194,20 +210,4 @@ func runAutoUpdateOnce(ctx context.Context, client *http.Client, adminBase, chan
 	}
 
 	logEntry.WithFields(logrus.Fields{"from": body.CurrentVersion, "to": body.TargetVersion}).Info("auto-update applied")
-}
-
-func ensureHost(addr string) string {
-	if strings.HasPrefix(addr, "http") {
-		return addr
-	}
-	if strings.HasPrefix(addr, ":") {
-		return net.JoinHostPort("127.0.0.1", strings.TrimPrefix(addr, ":"))
-	}
-	if strings.Contains(addr, "://") {
-		return addr
-	}
-	if strings.Contains(addr, ":") {
-		return addr
-	}
-	return net.JoinHostPort("127.0.0.1", addr)
 }
