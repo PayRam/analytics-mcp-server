@@ -3,7 +3,7 @@
 The agent supervises the Chat API and MCP processes, manages versioned releases, and exposes admin HTTP endpoints for health, status, logs, and safe rollouts.
 
 ## Running locally
-- Default listen: `:9900` (override `PAYRAM_AGENT_LISTEN_ADDR`).
+- Default listen: `127.0.0.1:9900` (override `PAYRAM_AGENT_LISTEN_ADDR`; any address other than loopback prints a warning at startup).
 - Seed and state live under `PAYRAM_AGENT_HOME` (default `/var/lib/payram-mcp`). For local runs use the Make target, which seeds from local builds:
   ```sh
   make run-agent
@@ -12,11 +12,9 @@ The agent supervises the Chat API and MCP processes, manages versioned releases,
   ```
 
 ## Authentication
-Admin endpoints require the `X-MCP-Key` header and an optional IP allowlist:
-- `PAYRAM_AGENT_ADMIN_TOKEN` (required)
-- `PAYRAM_AGENT_ADMIN_ALLOWLIST` (comma-separated CIDRs; empty allows any)
-
-Send header `X-MCP-Key: <token>` on `/admin/*` routes.
+Every `/admin/*` request needs the header `X-MCP-Key: <PAYRAM_AGENT_ADMIN_TOKEN>`, whatever address it comes from. Loopback and Docker network addresses get no exception, and `PAYRAM_AGENT_ADMIN_ALLOWLIST` is ignored.
+- Set `PAYRAM_AGENT_ADMIN_TOKEN` to call `/admin` yourself. The setup script writes a random one into `.env`.
+- If it is not set, the agent makes a random token at startup that only its own update loop knows, so nobody else can call `/admin`.
 
 ## API surface
 Base URL defaults to `http://localhost:9900`.

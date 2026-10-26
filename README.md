@@ -1,5 +1,42 @@
 # PayRam Analytics MCP Server
 
+> [!WARNING]
+> **Retired.** This analytics MCP server and its agent are no longer maintained. An MCP server built into PayRam itself is replacing them. Do not set up new installs. If you run it today, remove it (steps below).
+>
+> **Your install will not pick this version up by itself.** The Docker setup (`setup_payram_agent.sh`) runs the chat, MCP and bot programs built into its own image (`PAYRAM_AGENT_*_BIN=/app/...` in `.env`). Its automatic update downloads new versions but never runs them, and it never updates the agent itself. Only a rebuild changes what runs.
+
+## Remove it (recommended)
+
+**Docker install** (`setup_payram_agent.sh`). Run these in the folder where you ran the script. If you set `HOST_AGENT_HOME`, `--env-file` or `RUN_IMAGE`, use your values instead.
+```sh
+docker rm -f payram-analytics-agent     # stops and removes the container
+docker rmi payram-analytics-agent:dev   # removes the image the script built
+rm -rf .agent-home .env                 # these hold your PayRam dashboard password, OpenAI key and Telegram bot token in plain text
+```
+The container ran as root, so some files under `.agent-home` may need `sudo rm -rf .agent-home`.
+The script started the container with `docker run --rm -d` and no restart policy. If `docker ps --filter name=payram-analytics-agent` shows nothing, the container is already gone (a reboot or a Docker restart stops it, and Docker then removes it), and you only need to delete the image and the files.
+
+**Started by `setup_payram_agents.sh` from payram-scripts** (`mcp.bin` running on the host). Use `<your PAYRAM_WORK_DIR>/.payraminfo` if you set that variable.
+```sh
+kill "$(cat ~/.payraminfo/mcp-server.pid)"   # or: pkill -f '.payraminfo/mcp.bin'
+rm -f ~/.payraminfo/mcp.bin ~/.payraminfo/mcp.bin.sha256 ~/.payraminfo/mcp.bin.version ~/.payraminfo/mcp-server.pid
+```
+
+**Run from a checkout** (`make run-agent`, `make run-mcp`, `make run-app`, `go run ...`): stop it with Ctrl-C in its terminal, or run `pkill -f payram-analytics`.
+
+**Then check that nothing is still listening:** `lsof -nP -iTCP:3333 -iTCP:2358 -iTCP:9900 -sTCP:LISTEN` (on Linux you can use `ss -ltnp | grep -E ':(3333|2358|9900) '`). As a precaution, change the password of the PayRam dashboard account the agent signed in with. If you made an OpenAI key or a Telegram bot just for this agent, revoke them too.
+
+## If you keep it: what this version changes
+
+Get it by rebuilding. Run `git pull` in your checkout, then run `./setup_payram_agent.sh` again. It rebuilds the image from your checkout and writes a new `.env`. Do this only if you choose to keep the agent.
+
+- **A tool call can no longer redirect your PayRam login.** Tools refuse `base_url` with an error. The server sends its token, and any token a caller passes, only to the PayRam URL in its own `PAYRAM_ANALYTICS_BASE_URL`.
+- **Everything listens on 127.0.0.1 by default:** the MCP server (3333), the chat API (2358) and the agent (9900). To choose another address, set `MCP_HTTP_ADDR` / `-http`, `CHAT_API_ADDR` / `-addr` or `PAYRAM_AGENT_LISTEN_ADDR`. Any address other than loopback prints a warning at startup.
+- **Every `/admin` call needs the admin token**, sent as the `X-MCP-Key: $PAYRAM_AGENT_ADMIN_TOKEN` header. Calls from 127.0.0.1 or a Docker network (172.16.0.0/12) no longer get in without it, and `PAYRAM_AGENT_ADMIN_ALLOWLIST` is ignored. The setup script writes a random token into `.env`. If no token is set, the agent makes one that only its own update check knows.
+- **Docker setup:** the container publishes only `127.0.0.1:9900`. Reach the MCP server at `http://127.0.0.1:9900/mcp` and the chat API at `http://127.0.0.1:9900/chat` (ports 3333 and 2358 are no longer published).
+
+## About
+
 A Go-based Model Context Protocol (MCP) server that provides AI assistants with structured access to PayRam's analytics, documentation, and operational data through 20+ specialized tools.
 
 ## 📚 Documentation
@@ -33,6 +70,8 @@ export USER_PASSWORD=secret
 
 Token resolution order per call: **per-call `token` arg → auto-login manager → `PAYRAM_ANALYTICS_TOKEN` env**.
 
+The PayRam URL comes only from `PAYRAM_ANALYTICS_BASE_URL`. Tools refuse a `base_url` argument, so a caller cannot make the server send a token anywhere else.
+
 ## Run (stdio)
 ```sh
 make run
@@ -54,7 +93,7 @@ Send JSON-RPC 2.0 requests over stdin. Example session:
 
 ## Run (HTTP)
 ```sh
-make run-mcp  # listens on :3333
+make run-mcp  # listens on 127.0.0.1:3333 (set MCP_HTTP_ADDR or -http to change it)
 ```
 Call with a single JSON-RPC request per POST:
 ```sh
@@ -205,7 +244,7 @@ Bot service notes:
 - Logs are available via the agent admin endpoint: `/admin/logs?component=bot&tail=200`.
 - Only long-polling is implemented by default; set `TELEGRAM_WEBHOOK_BASE_URL` to introduce webhook mode later.
 
-Generated `.env` includes defaults for ports (agent `9900`, chat `2358`, MCP `3333`), update channel, allowlist (`PAYRAM_AGENT_ADMIN_ALLOWLIST`), and proxying chat via the agent.
+Generated `.env` includes defaults for ports (agent `9900`, chat `2358`, MCP `3333`), the update channel, a random `PAYRAM_AGENT_ADMIN_TOKEN` (send it as `X-MCP-Key` on `/admin` calls), and proxying chat via the agent. Only the agent's port is published, on `127.0.0.1:9900`; chat and MCP are reached through it at `/chat` and `/mcp`.
 
 ## Structure
 - `main.go`: wires stdin/stdout loop to the MCP server.
