@@ -1,9 +1,9 @@
-# syntax=docker/dockerfile:1.7
+# syntax=docker/dockerfile:1.28
 
 ############################
 # Build stage
 ############################
-FROM golang:1.24 AS builder
+FROM golang:1.27.3-trixie AS builder
 WORKDIR /src
 
 # Cache deps
@@ -33,9 +33,9 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
 ############################
 # Runtime stage
 ############################
-FROM debian:stable-slim
+FROM debian:trixie-slim
 WORKDIR /app
-RUN apt-get update && apt-get install -y ca-certificates curl && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get upgrade -y && apt-get install -y ca-certificates curl && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /out/payram-analytics-agent /app/agent
 COPY --from=builder /out/payram-analytics-chat  /app/chat
